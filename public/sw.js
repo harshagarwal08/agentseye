@@ -1,7 +1,7 @@
 // The app shell (HTML, CSS, scripts, icons) is cached so Lookout opens instantly from the Home Screen and can
 // show "Can't reach your Mac" offline. It is network-first, so a new version shows up on the next open.
 // Live data (/api) is never cached.
-const SHELL = 'lookout-shell-v2';
+const SHELL = 'lookout-shell-v3';
 const FILES = ['/', '/index.html', '/style.css', '/app.js', '/avatars.js', '/markdown.js', '/icon.svg', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', event => {
