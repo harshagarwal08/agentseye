@@ -240,7 +240,10 @@ function unlockForm(g, error = '') {
     <p>${pairCode() ? 'Paired with your Mac. Enter your AgentsEye password.' : 'Enter your AgentsEye password.'}</p>
     <p class="small muted">🔒 Encrypted from this phone to your Mac. The relay in between can't read anything.</p>
     <input id="pw" type="password" placeholder="Password" autocomplete="current-password" minlength="8" required>
-    <button class="primary" type="submit">Unlock</button><div class="error" id="err">${esc(error)}</div></form>`;
+    <button class="primary" type="submit">Unlock</button><div class="error" id="err">${esc(error)}</div>
+    ${/iPhone|iPad/.test(navigator.userAgent) && /CriOS|FxiOS|EdgiOS/.test(navigator.userAgent) ? '<p class="small muted">To add AgentsEye to your Home Screen, iPhone needs Safari.</p><button type="button" id="to-safari">Open in Safari</button>' : ''}</form>`;
+  // x-safari-https:// is iOS's own way to hand a link from another browser to Safari; keep the pairing code.
+  $('#to-safari')?.addEventListener('click', () => { location.href = `x-safari-${location.origin}/m/${relay.info.macId}${pairCode() ? `?pair=${encodeURIComponent(pairCode())}` : ''}`; });
   $('#pw').focus();
   $('#unlock').onsubmit = async e => {
     e.preventDefault();
@@ -338,12 +341,16 @@ function installSheet() {
   }
   const safari = isIOS && !/CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
   sheet(`<h3>Add AgentsEye to your Home Screen</h3>
-    ${isIOS && !safari ? '<p class="small muted">On iPhone this only works from Safari. Copy this page\'s address and open it in Safari first.</p><button class="primary" id="copy-url">Copy address</button>' : isIOS ? `
-    <ol class="steps"><li>Tap the <b>Share</b> button <span class="kbd">⬆︎</span> at the bottom of Safari.</li><li>Scroll down and tap <b>Add to Home Screen</b>.</li><li>Tap <b>Add</b>, then open AgentsEye from your Home Screen.</li></ol>
+    ${isIOS && !safari ? '<p class="small muted">On iPhone only Safari can add AgentsEye as an app. Added from another browser, it opens as a plain link in that browser.</p><button class="primary" id="open-safari">Open in Safari</button><button id="copy-url">Copy address instead</button>' : isIOS ? `
+    <ol class="steps"><li>Tap the <b>Share</b> button <span class="kbd">⬆︎</span> at the bottom of Safari (or ⋯ then Share).</li><li>Scroll down and tap <b>Add to Home Screen</b>.</li><li>Make sure <b>Open as Web App</b> is on, then tap <b>Add</b>.</li><li>Open AgentsEye from your Home Screen.</li></ol>
+    <p class="small muted">If an older AgentsEye icon opens in Chrome, delete it first: it was saved as a plain link.</p>
     <p class="small muted">It opens full screen like an app, and it is the only way iPhone allows notifications.</p>` : `
     <ol class="steps"><li>Open your browser's <b>⋮</b> menu.</li><li>Tap <b>Install app</b> or <b>Add to Home screen</b>.</li></ol>`}
     <button class="ghost" data-close>Done</button>`, card => {
-    card.querySelector('#copy-url')?.addEventListener('click', () => navigator.clipboard.writeText(relay.on && relay.info.macId ? `${location.origin}/m/${relay.info.macId}` : location.href.split('#')[0]).then(() => toast('Copied. Paste it into Safari.')));
+    const link = relay.on && relay.info.macId ? `${location.origin}/m/${relay.info.macId}` : location.href.split('#')[0];
+    // x-safari-https:// is iOS's own way to hand a link from another browser to Safari.
+    card.querySelector('#open-safari')?.addEventListener('click', () => { location.href = `x-safari-${link}`; });
+    card.querySelector('#copy-url')?.addEventListener('click', () => navigator.clipboard.writeText(link).then(() => toast('Copied. Paste it into Safari.')));
   });
 }
 
