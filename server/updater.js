@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { run } from './exec.js';
 import { DATA, readJson } from './paths.js';
 
-// Installed copies (made by install.sh, in ~/.agentseye/app) keep themselves up to date: once a day they compare
+// Installed copies (made by install.sh, in ~/.agentseye/app) keep themselves up to date: every 6 hours they compare
 // their version with the repository's and, if newer, download it next to themselves, swap it in and exit so
 // launchd restarts them on the new code. Development checkouts never update themselves.
 const APP = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
@@ -56,5 +56,5 @@ export async function update({ force = false } = {}) {
 export function boot() {
   if (!installed()) return;
   setTimeout(() => update().catch(() => {}), 60000).unref();
-  setInterval(() => update().catch(() => {}), 24 * 3600 * 1000).unref();
+  setInterval(() => update().catch(() => {}), 6 * 3600 * 1000).unref();
 }

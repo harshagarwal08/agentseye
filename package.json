@@ -1,6 +1,6 @@
 {
   "name": "agentseye",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Your coding agents, in your pocket: see and control Claude Code and Codex on your Mac from your phone. End-to-end encrypted, works on company Macs.",
   "license": "MIT",
   "private": true,

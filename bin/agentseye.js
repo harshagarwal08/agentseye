@@ -25,6 +25,8 @@ if (command === 'start') {
 } else if (command === 'update') {
   const result = await (await import('../server/updater.js')).update({ force:true });
   console.log(result.message);
+  // Run from a terminal, the update replaces the files but the running service is another process: restart it.
+  if (result.updated) (await import('node:child_process')).spawnSync('/bin/launchctl', ['kickstart', '-k', `gui/${process.getuid()}/dev.agentseye.server`]);
 } else {
   console.log('Usage: agentseye [start|install-hook|uninstall-hook|install-service|uninstall-service|set-relay <url>|update]');
   process.exit(1);
