@@ -1,0 +1,23 @@
+{
+  "name": "lookout",
+  "version": "0.1.0",
+  "description": "See everything running on your Mac: coding agents, processes, ports, startup items, updates and permissions.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "lookout": "bin/lookout.js"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test --experimental-test-module-mocks"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "web-push": "^3.6.7"
+  }
+}

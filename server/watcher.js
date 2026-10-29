@@ -1,0 +1,48 @@
+import path from 'node:path';
+import { claudeLive } from './agents.js';
+import { nameOf } from './names.js';
+import * as approvals from './approvals.js';
+import * as auth from './auth.js';
+import * as push from './push.js';
+import { usage } from './usage.js';
+
+// Prefer the name the person gave the session; fall back to its folder.
+const label = (id, cwd) => nameOf('claude', id) || path.basename(cwd || '') || 'Claude';
+
+// Turns state changes into phone notifications: an agent waiting for you, an agent finishing, a device at the door.
+export function start() {
+  let last = new Map([...claudeLive()].map(([id, s]) => [id, s.status]));
+  setInterval(() => {
+    const now = claudeLive();
+    for (const [id, s] of now) {
+      const before = last.get(id);
+      if (s.status === 'waiting' && before !== 'waiting') {
+        push.notify({ title:`${label(id, s.cwd)} needs your OK`, body:s.name || 'Claude is waiting for you.', url:`/#/s/claude/${id}`, tag:`ask-${id}` });
+      } else if (before === 'busy' && s.status === 'idle') {
+        push.notify({ title:`${label(id, s.cwd)} finished`, body:s.name || 'Claude is done.', url:`/#/s/claude/${id}`, tag:`done-${id}` });
+      }
+    }
+    last = new Map([...now].map(([id, s]) => [id, s.status]));
+  }, 5000).unref();
+
+  // One heads-up per limit window when it passes 90%, so you can pace work before you hit the wall.
+  const warned = new Set();
+  const names = { claude:'Claude Code', codex:'Codex' };
+  setInterval(async () => {
+    for (const u of await usage().catch(() => [])) {
+      for (const w of u.windows || []) {
+        const key = `${u.harness}:${w.key}:${w.resetsAt}`;
+        if (w.percent >= 90 && !warned.has(key)) {
+          warned.add(key);
+          push.notify({ title:`${names[u.harness]}: ${w.label.toLowerCase()} limit at ${w.percent}%`, body:w.resetsAt ? `Resets ${new Date(w.resetsAt).toLocaleString([], { weekday:'short', hour:'numeric', minute:'2-digit' })}.` : '', url:'/#/', tag:`limit-${key}` });
+        }
+      }
+    }
+  }, 5 * 60000).unref();
+
+  approvals.onRequest(r => {
+    const what = r.input?.command || r.input?.file_path || r.input?.url || '';
+    push.notify({ title:`${label(r.sessionId, r.cwd)}: allow ${r.tool}?`, body:what.slice(0, 160), url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` });
+  });
+  auth.onDeviceWaiting(d => push.notify({ title:'New device wants to sign in', body:`${d.name}. Approve it on your Mac if this was you.`, url:'/#/settings', tag:`device-${d.id}` }));
+}
