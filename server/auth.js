@@ -28,7 +28,23 @@ export const hasPassword = () => Boolean(readJson(authFile, null)?.hash);
 export function setPassword(password) {
   if (typeof password !== 'string' || password.length < 8) throw fail('Password must be at least 8 characters.', 400);
   const salt = crypto.randomBytes(16).toString('hex');
-  writeJson(authFile, { salt, hash:scrypt(password, salt) });
+  writeJson(authFile, { salt, hash:scrypt(password, salt), ...relayKeyFor(password) });
+}
+
+// The relay key: phones derive the same 256-bit key from the password in the browser (public/e2e.js), so traffic
+// through a relay is encrypted end to end. Only the derived key is kept here, readable by your user alone.
+export const RELAY_ITERATIONS = 600000;
+function relayKeyFor(password) {
+  const kdfSalt = crypto.randomBytes(16).toString('base64');
+  const relayKey = crypto.pbkdf2Sync(password, Buffer.from(kdfSalt, 'base64'), RELAY_ITERATIONS, 32, 'sha256').toString('base64');
+  return { kdfSalt, relayKey };
+}
+export const relayKeyInfo = () => { const r = readJson(authFile, {}); return r.relayKey ? { salt:r.kdfSalt, iterations:RELAY_ITERATIONS, key:Buffer.from(r.relayKey, 'base64') } : null; };
+// Passwords set before the relay existed get a key the next time they are typed on the Mac.
+export function ensureRelayKey(password) {
+  const record = readJson(authFile, null);
+  if (!record || record.relayKey || !checkPassword(password)) return;
+  writeJson(authFile, { ...record, ...relayKeyFor(password) });
 }
 
 export function checkPassword(password) {

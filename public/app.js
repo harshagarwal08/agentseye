@@ -1,5 +1,6 @@
 import { avatar } from './avatars.js';
 import { markdown } from './markdown.js';
+import * as e2e from './e2e.js';
 
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
@@ -23,22 +24,70 @@ class ApiError extends Error {
 }
 const offlineMessage = "Can't reach your Mac. It may be asleep or offline.";
 
+// ---------- Relay mode ----------
+// Through a Lookout relay, every API call is sealed with a key derived from your password, so neither the relay
+// nor a company proxy can read it. The Mac says whether this page came through a relay (/relay-info).
+const relay = { on:false, info:null, key:null };
+async function detectRelay() {
+  try {
+    const info = await fetch('/relay-info', { cache:'no-store' }).then(r => (r.ok ? r.json() : Promise.reject()));
+    localStorage.setItem('relay-info', JSON.stringify(info));
+    relay.info = info;
+  } catch { relay.info = JSON.parse(localStorage.getItem('relay-info') || '{"relay":false}'); }
+  relay.on = Boolean(relay.info.relay);
+}
+async function relayKey() {
+  if (relay.key) return relay.key;
+  const raw = localStorage.getItem('relay-key');
+  if (!raw) return null;
+  relay.key = await e2e.importKey(e2e.unb64(raw));
+  return relay.key;
+}
+async function unlock(password) {
+  const raw = await e2e.deriveKeyBytes(password, relay.info.salt, relay.info.iterations);
+  localStorage.setItem('relay-key', e2e.b64(raw));
+  relay.key = await e2e.importKey(raw);
+}
+const forgetKey = () => { localStorage.removeItem('relay-key'); relay.key = null; };
+
+// One request, plain or sealed. Returns { status, data } with data parsed JSON (or a Blob for files).
+async function transport(path, body, signal) {
+  const init = body === undefined ? {} : { method:'POST', headers:{ 'content-type':'application/json', 'x-lookout':'1' }, body:JSON.stringify(body) };
+  if (!relay.on) {
+    const res = await fetch(path, { signal, ...init });
+    return { status:res.status, data:await res.json().catch(() => null) };
+  }
+  const key = await relayKey();
+  if (!key) throw new ApiError('Enter your password to unlock.', 'locked', 401);
+  const nonce = e2e.b64(crypto.getRandomValues(new Uint8Array(18)));
+  const box = await e2e.seal(key, { method:body === undefined ? 'GET' : 'POST', path, body:body ?? null, ts:Date.now() }, e2e.requestAad(nonce));
+  const res = await fetch('/api/e2e', { signal, method:'POST', headers:{ 'content-type':'application/json', 'x-lookout':'1' }, body:JSON.stringify({ nonce, box }) });
+  const outer = await res.json().catch(() => null);
+  if (res.status === 401) { forgetKey(); throw new ApiError('Wrong password.', 'locked', 401); }
+  if (!res.ok) return { status:res.status, data:outer };
+  const reply = await e2e.open(key, outer.box, e2e.responseAad(nonce));
+  const bytes = e2e.unb64(reply.body);
+  if (reply.type.includes('json')) return { status:reply.status, data:JSON.parse(new TextDecoder().decode(bytes) || 'null') };
+  return { status:reply.status, data:null, blob:new Blob([bytes], { type:reply.type }), disposition:reply.disposition };
+}
+
 async function api(path, body, { timeout = body === undefined ? 15000 : 30000 } = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
   let res;
-  try {
-    res = await fetch(path, { signal:ctrl.signal, ...(body === undefined ? {} : { method:'POST', headers:{ 'content-type':'application/json', 'x-lookout':'1' }, body:JSON.stringify(body) }) });
-  } catch (e) {
+  try { res = await transport(path, body, ctrl.signal); }
+  catch (e) {
+    if (e instanceof ApiError) throw e;
     connection(false);
     throw new ApiError(e.name === 'AbortError' ? 'Your Mac is taking too long to answer.' : offlineMessage, e.name === 'AbortError' ? 'timeout' : 'offline');
   } finally { clearTimeout(timer); }
-  const data = await res.json().catch(() => null);
-  // Cloudflare answers 502/530 with an HTML page when the Mac side of the tunnel is gone.
-  if (!data && res.status >= 500) { connection(false); throw new ApiError(offlineMessage, 'offline', res.status); }
+  const data = res.data;
+  // Tunnels and relays answer with a plain error page when the Mac side is gone.
+  if (!data && !res.blob && res.status >= 500) { connection(false); throw new ApiError(offlineMessage, 'offline', res.status); }
   connection(true);
+  if (res.blob) return res;
   if ((res.status === 401 || res.status === 423) && !path.startsWith('/api/auth/')) { gate(); throw new ApiError('Signed out', 'auth', res.status); }
-  if (!res.ok) throw new ApiError(data?.error || (res.status >= 500 ? 'Something went wrong on your Mac. Try again.' : `Request failed (${res.status})`), res.status >= 500 ? 'server' : 'client', res.status);
+  if (res.status >= 400) throw new ApiError(data?.error || (res.status >= 500 ? 'Something went wrong on your Mac. Try again.' : `Request failed (${res.status})`), res.status >= 500 ? 'server' : 'client', res.status);
   return data ?? {};
 }
 
@@ -127,8 +176,17 @@ let gateTimer;
 async function gate() {
   stop();
   clearTimeout(gateTimer);
-  const state = await fetch('/api/auth/state').then(r => r.json()).catch(() => null);
   const g = $('#gate');
+  if (relay.on && relay.info.unavailable) {
+    $('#app').hidden = true;
+    g.hidden = false;
+    g.innerHTML = '<div class="box"><img src="/icon.svg" alt=""><h1>Almost there</h1><p>Sign in to Lookout on your Mac once to turn on encryption for the relay, then reload this page.</p></div>';
+    return;
+  }
+  if (relay.on && !(await relayKey())) return unlockForm(g);
+  let state = null;
+  try { state = await api('/api/auth/state'); }
+  catch (e) { if (e.kind === 'locked') return unlockForm(g, e.message); }
   if (!state) {
     // Signed-in phones keep their screen and just show the reconnecting pill; only a cold start lands here.
     if (!$('#app').hidden) { connection(false); gateTimer = setTimeout(gate, 3000); return; }
@@ -148,6 +206,7 @@ async function gate() {
     gateTimer = setTimeout(gate, 3000);
     return;
   }
+  if (relay.on) return unlockForm(g);
   const setup = !state.setup;
   if (setup && !state.local) {
     g.innerHTML = '<div class="box"><img src="/icon.svg" alt=""><h1>Lookout</h1><p>Open Lookout on your Mac first and choose a password.</p></div>';
@@ -170,6 +229,65 @@ async function gate() {
     } catch (err) { $('#err').textContent = err.message; btn.classList.remove('busy'); btn.disabled = false; }
   };
 }
+
+// Through a relay the password does two jobs: it unlocks the encryption key on this phone, then signs it in.
+function unlockForm(g, error = '') {
+  $('#app').hidden = true;
+  g.hidden = false;
+  g.innerHTML = `<form class="box" id="unlock"><img src="/icon.svg" alt=""><h1>Lookout</h1>
+    <p>${pairCode() ? 'Paired with your Mac. Enter your Lookout password.' : 'Enter your Lookout password.'}</p>
+    <p class="small muted">🔒 Encrypted from this phone to your Mac. The relay in between can't read anything.</p>
+    <input id="pw" type="password" placeholder="Password" autocomplete="current-password" minlength="8" required>
+    <button class="primary" type="submit">Unlock</button><div class="error" id="err">${esc(error)}</div></form>`;
+  $('#pw').focus();
+  $('#unlock').onsubmit = async e => {
+    e.preventDefault();
+    const btn = $('#unlock button[type=submit]');
+    btn.classList.add('busy');
+    btn.disabled = true;
+    try {
+      await unlock($('#pw').value);
+      const state = await api('/api/auth/state');
+      if (!state.authed) await api('/api/auth/login', { password:$('#pw').value, pair:pairCode() });
+      sessionStorage.removeItem('pair');
+      gate();
+    } catch (err) {
+      if (err.kind === 'locked') forgetKey();
+      $('#err').textContent = err.kind === 'locked' ? 'Wrong password.' : err.message;
+      btn.classList.remove('busy');
+      btn.disabled = false;
+    }
+  };
+}
+
+// Images, videos and downloads point at /api/... URLs. Through a relay those must be fetched sealed, so they are
+// swapped for local blob URLs as soon as they appear, and download links are fetched the same way on tap.
+const blobCache = new Map();
+async function sealedBlobUrl(url) {
+  if (!blobCache.has(url)) blobCache.set(url, api(url).then(r => URL.createObjectURL(r.blob)).catch(() => { blobCache.delete(url); return ''; }));
+  return blobCache.get(url);
+}
+function hydrateMedia(root) {
+  if (!relay.on) return;
+  root.querySelectorAll?.('img[src^="/api/"], video[src^="/api/"], audio[src^="/api/"]').forEach(el => {
+    const url = el.getAttribute('src');
+    el.removeAttribute('src');
+    sealedBlobUrl(url).then(src => { if (src) el.src = src; });
+  });
+}
+new MutationObserver(list => list.forEach(m => m.addedNodes.forEach(n => n.nodeType === 1 && hydrateMedia(n.parentNode || n)))).observe(document.documentElement, { childList:true, subtree:true });
+document.addEventListener('click', e => {
+  const a = e.target.closest('a[href^="/api/"]');
+  if (!a || !relay.on) return;
+  e.preventDefault();
+  attempt(async () => {
+    const r = await api(a.getAttribute('href'));
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(r.blob);
+    link.download = (r.disposition.match(/filename="([^"]+)"/) || [])[1] || 'download';
+    link.click();
+  });
+}, true);
 
 // ---------- Router ----------
 let me = { local:false };
@@ -223,7 +341,7 @@ function guideSteps(st) {
   const onMac = me.local;
   return [
     { id:'link', done:st.phoneLink, title:'Turn on phone access',
-      why:'Gives Lookout a secure link your phone can open from anywhere. Tailscale is private and its address never changes; Cloudflare works without an account but its address changes on restart.',
+      why:'Gives Lookout a secure link your phone can open from anywhere. The Lookout relay needs nothing installed (good for company Macs) and is encrypted end to end; Tailscale and Cloudflare are the alternatives.',
       action:onMac ? '<a href="#/settings"><button class="small primary">Open Settings</button></a>' : '' , macOnly:true },
     { id:'signin', done:st.phoneSignedIn, title:'Sign in on your phone',
       why:'Scan the QR code on your Mac with your phone camera, then enter your password. Scanning skips the approval step.',
@@ -350,6 +468,25 @@ function openWhenReady(started, name) {
   setTimeout(tick, 1500);
 }
 
+// ---------- Relay settings ----------
+function relayRow(r) {
+  const state = { on:`On · ${esc(r.link)}`, connecting:'Connecting to the relay…', error:esc(r.error || 'The relay refused this Mac.'), off:'Works on company Macs: nothing to install, encrypted end to end.' }[r.status] || '';
+  return `<div class="item" style="flex-wrap:wrap"><div class="grow"><b>Lookout relay</b> <span class="chip green">Recommended</span><div class="s">${state}</div></div>
+    ${me.local ? `<label class="switch"><input type="checkbox" id="relay-on" ${r.enabled ? 'checked' : ''}><i></i></label>` : ''}
+    ${me.local ? `<div style="flex-basis:100%;display:grid;gap:8px;margin-top:10px">
+      <input id="relay-url" placeholder="Relay address, e.g. https://lookout-relay.you.workers.dev" value="${esc(r.url)}" autocapitalize="off" autocorrect="off" inputmode="url">
+      ${r.keyReady ? '' : '<input id="relay-pw" type="password" placeholder="Your Lookout password (once, to set up encryption)" autocomplete="current-password">'}
+      ${r.enabled ? '' : '<div class="small muted">Deploy your own relay for free on Cloudflare (see relay/README.md), or use one your team runs.</div>'}</div>` : ''}</div>`;
+}
+function bindRelayRow(root, r, after) {
+  const toggle = root.querySelector('#relay-on');
+  toggle?.addEventListener('change', () => attempt(async () => {
+    try { await api('/api/relay', { url:root.querySelector('#relay-url').value.trim(), enabled:toggle.checked, password:root.querySelector('#relay-pw')?.value || undefined }); }
+    catch (e) { toggle.checked = !toggle.checked; throw e; }
+    setTimeout(after, 1200);
+  }, toggle.checked ? 'Connecting to the relay…' : 'Relay off'));
+}
+
 // ---------- Mac controls ----------
 async function lockMac() {
   if (!await confirmSheet('Lock your Mac?', 'The screen turns off and locks. Agents keep running; your password is needed to use it.', 'Lock now')) return;
@@ -358,6 +495,7 @@ async function lockMac() {
 
 // Lists dev servers found on the Mac and opens the chosen one in a new tab through the signed-in preview proxy.
 async function previewSheet() {
+  if (relay.on) return sheet('<h3>Preview a dev server</h3><p class="small muted">Previews need a direct link to your Mac (Tailscale or Cloudflare). They are not available through the relay yet.</p><button class="ghost" data-close>OK</button>');
   sheet(`<h3>Preview a dev server</h3>${skeleton(3)}`);
   let d;
   try { d = await api('/api/preview'); } catch (e) { sheet(`<h3>Preview a dev server</h3>${errorPanel(e)}`, card => { card.querySelector('[data-retry]').onclick = previewSheet; }); return; }
@@ -847,7 +985,8 @@ async function settingsView() {
       ${isPhone && !standalone() ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Add Lookout to your Home Screen</b><div class="small muted">Opens full screen, needed for notifications on iPhone.</div></div><button class="small primary" id="install-s">How</button></div>' : ''}
       <div class="section"><h2>Phone access</h2></div>
       <div class="group">
-        <div class="item"><div class="grow"><b>Private link with Tailscale</b> <span class="chip green">Recommended</span><div class="s">${{ missing:'A free app that links your own devices. The address never changes and nobody else can reach it.', 'signed-out':'Installed. Open Tailscale and sign in, on this Mac and on your phone.', stopped:'Tailscale is off. Open it and connect.', running:s.tailscale.serving ? `On · ${esc(s.tailscale.url)}` : 'Connected. Turn on to serve Lookout to your devices.' }[s.tailscale.state] || 'Unavailable'}</div></div>
+        ${relayRow(s.relay)}
+        <div class="item"><div class="grow"><b>Private link with Tailscale</b><div class="s">${{ missing:'A free app that links your own devices. The address never changes and nobody else can reach it.', 'signed-out':'Installed. Open Tailscale and sign in, on this Mac and on your phone.', stopped:'Tailscale is off. Open it and connect.', running:s.tailscale.serving ? `On · ${esc(s.tailscale.url)}` : 'Connected. Turn on to serve Lookout to your devices.' }[s.tailscale.state] || 'Unavailable'}</div></div>
           ${me.local ? (s.tailscale.state === 'running' ? `<label class="switch"><input type="checkbox" id="ts" ${s.tailscale.serving ? 'checked' : ''}><i></i></label>` : `<button class="small" id="ts-open">${s.tailscale.state === 'missing' ? 'Get it' : 'Open'}</button>`) : ''}</div>
         <div class="item"><div class="grow"><b>Public link with Cloudflare</b><div class="s">${{ on:'On · private https link through Cloudflare', missing:'Needs cloudflared (free, installs with Homebrew)', off:'Off · only this Mac can open Lookout', starting:'Starting…', restarting:'Reconnecting…' }[t.status] || esc(t.status)}</div></div>
           ${me.local ? (t.status === 'missing' ? `<button class="small primary" id="install-cf" ${s.installingCloudflared ? 'disabled' : ''}>${s.installingCloudflared ? 'Installing…' : 'Install'}</button>` : `<label class="switch"><input type="checkbox" id="tunnel" ${t.enabled ? 'checked' : ''}><i></i></label>`) : ''}</div>
@@ -883,6 +1022,7 @@ async function settingsView() {
     shown = html;
     view.innerHTML = html;
     $('#install-s')?.addEventListener('click', installSheet);
+    bindRelayRow(view, s.relay, () => { shown = ''; render(); });
     $('#ts')?.addEventListener('change', e => attempt(async () => { await api('/api/tailscale', { on:e.target.checked }); shown = ''; render(); }, e.target.checked ? 'Serving on your tailnet' : 'Stopped'));
     $('#ts-open')?.addEventListener('click', () => attempt(() => api('/api/tailscale/open', {})));
     view.querySelectorAll('[data-awake]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/power/keep-awake', { mode:b.dataset.awake }); shown = ''; render(); }, 'Saved'));
@@ -902,7 +1042,7 @@ async function settingsView() {
     $('#others')?.addEventListener('click', async () => { if (await confirmSheet('Sign out every other device?', '', 'Sign out others', true)) attempt(async () => { await api('/api/devices/others', {}); render(); }); });
     view.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/approve', { id:b.dataset.approve }); render(); }, 'Approved'));
     view.querySelectorAll('[data-remove]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/remove', { id:b.dataset.remove }); render(); }));
-    $('#logout').onclick = async () => { await disablePush().catch(() => {}); await api('/api/auth/logout', {}); gate(); };
+    $('#logout').onclick = async () => { await disablePush().catch(() => {}); await api('/api/auth/logout', {}); forgetKey(); gate(); };
   };
   await firstLoad(view, render, `<div class="top"><h1>Settings</h1></div>${skeleton(4, 'block')}`);
   every(5000, () => render().catch(() => {}));
@@ -930,4 +1070,4 @@ async function disablePush() {
   await api('/api/push/unsubscribe', {});
 }
 
-gate();
+detectRelay().then(gate);

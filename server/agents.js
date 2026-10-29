@@ -211,7 +211,17 @@ export async function sessions({ limit = 40 } = {}) {
     list.push({ harness:'claude', id, file, updatedAt:file ? fs.statSync(file).mtimeMs : live.startedAt || Date.now(), title:meta.aiTitle || meta.prompt || 'New session', cwd:meta.cwd || live.cwd, branch:meta.branch, live:true, pid:live.pid, status:live.status, entrypoint:live.entrypoint, subagents:file ? summary(claudeSubagents(file, true)) : undefined });
   }
   for (const s of list) s.name = nameOf(s.harness, s.id);
-  return list.sort((a, b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || b.updatedAt - a.updatedAt).map(({ file, ...s }) => s);
+  // Codex writes a new log file each time a conversation is resumed, all with the same id: keep one entry,
+  // live if any of its files is open, with the newest activity.
+  const merged = new Map();
+  for (const s of list) {
+    const key = `${s.harness}:${s.id}`;
+    const prev = merged.get(key);
+    if (!prev) { merged.set(key, s); continue; }
+    const keep = (s.live && !prev.live) || (s.live === prev.live && s.updatedAt > prev.updatedAt) ? s : prev;
+    merged.set(key, { ...keep, live:prev.live || s.live, updatedAt:Math.max(prev.updatedAt, s.updatedAt), title:keep.title !== '(untitled)' ? keep.title : (prev.title !== '(untitled)' ? prev.title : s.title) });
+  }
+  return [...merged.values()].sort((a, b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || b.updatedAt - a.updatedAt).map(({ file, ...s }) => s);
 }
 
 function textOf(content) {

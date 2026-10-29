@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +18,8 @@ import * as tailscale from './tailscale.js';
 import * as power from './power.js';
 import * as preview from './preview.js';
 import * as service from './service.js';
+import * as relay from './relay-client.js';
+import * as e2e from '../public/e2e.js';
 import { hasSubscriptions } from './push.js';
 import * as push from './push.js';
 import * as watcher from './watcher.js';
@@ -55,10 +58,17 @@ async function readBody(req, limit = 1 << 20) {
 // Lookout only listens on loopback. Phones arrive through cloudflared, which also connects from loopback but
 // sends the tunnel's Host and Cloudflare headers, so "local" means loopback + localhost Host + no proxy headers.
 const localHosts = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`]);
-const isLocal = req => localHosts.has(req.headers.host) && !req.headers['cf-connecting-ip'] && !req.headers['x-forwarded-for'] && !req.headers['tailscale-user-login'];
+// Relay traffic is replayed on loopback by relay-client.js and carries its per-process token; requests unwrapped
+// from an encrypted envelope carry INNER_TOKEN. Both only count when they really come from this machine.
+const INNER_TOKEN = crypto.randomBytes(24).toString('hex');
+const loopback = req => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+const viaRelay = req => loopback(req) && req.headers['x-lookout-relay'] === relay.RELAY_TOKEN;
+const unwrapped = req => loopback(req) && req.headers['x-lookout-inner'] === INNER_TOKEN;
+const isLocal = req => localHosts.has(req.headers.host) && !req.headers['cf-connecting-ip'] && !req.headers['x-forwarded-for'] && !req.headers['tailscale-user-login'] && !req.headers['x-lookout-relay'] && !req.headers['x-lookout-inner'];
 const remoteHosts = () => [tunnel.remoteHost(), tailscale.remoteHost()].filter(Boolean);
 const hostAllowed = req => localHosts.has(req.headers.host) || remoteHosts().includes(req.headers.host);
-const clientIp = req => req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '';
+const clientIp = req => ((viaRelay(req) || unwrapped(req)) && req.headers['x-lookout-relay-ip']) || req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '';
+const isHttps = req => ((viaRelay(req) || unwrapped(req)) ? req.headers['x-lookout-relay-proto'] === 'https' : !isLocal(req));
 const localOnly = req => { if (!isLocal(req)) throw fail('Only possible on the Mac itself.', 403); };
 
 // ---------- helpers for routes ----------
@@ -178,11 +188,18 @@ const routes = {
     let pairingAt = 0;
     if (local && phoneUrl()) pairingAt = currentPairing().createdAt;
     return {
-      tailscale:await tailscale.status(), power:await power.status(), phoneUrl:phoneUrl(),
+      tailscale:await tailscale.status(), power:await power.status(), phoneUrl:phoneUrl(), relay:{ ...relay.status(), keyReady:Boolean(auth.relayKeyInfo()) },
       tunnel:{ ...tunnel.status(), status:installed ? tunnel.status().status : 'missing' }, installingCloudflared:updates.installing('cloudflared'), pairingAt,
       hook:hookStatus(), approvals:approvals.settings(), history:approvals.list().history,
       devices:auth.listDevices(), deviceId:device.id,
     };
+  },
+  'POST /api/relay':async (b, _, req) => {
+    localOnly(req);
+    if (b.password && !auth.checkPassword(String(b.password))) throw fail('Wrong password.', 401);
+    if (b.password) auth.ensureRelayKey(String(b.password));
+    if (b.enabled && !auth.relayKeyInfo()) throw fail('Enter your Lookout password once to turn on encryption for the relay.', 409);
+    return relay.configure({ url:b.url, enabled:b.enabled });
   },
   'POST /api/tailscale':async (b, _, req) => { localOnly(req); return tailscale.setServing(Boolean(b.on)); },
   'POST /api/tailscale/open':async (_, __, req) => { localOnly(req); await run('/usr/bin/open', ['-a', 'Tailscale']).then(r => r.ok ? r : run('/usr/bin/open', ['https://tailscale.com/download/mac'])); return { ok:true }; },
@@ -204,7 +221,7 @@ const routes = {
     const [ts, pw, svc] = await Promise.all([tailscale.status(), power.status(), service.status()]);
     const devices = auth.listDevices();
     return {
-      phoneLink:ts.serving || tunnel.status().status === 'on',
+      phoneLink:Boolean(relay.link()) || ts.serving || tunnel.status().status === 'on', relay:relay.status().status,
       tailscale:ts.state, tailscaleServing:Boolean(ts.serving), cloudflare:tunnel.status().status,
       phoneSignedIn:devices.some(d => d.remote && d.approved),
       homeScreen:devices.some(d => d.remote && d.approved && d.standalone),
@@ -258,13 +275,13 @@ const routes = {
 
 const currentPairing = auth.pairingCode;
 // The link phones should use: the private Tailscale address if it is on, else the Cloudflare one.
-const phoneUrl = () => (tailscale.remoteHost() ? `https://${tailscale.remoteHost()}` : tunnel.status().url);
+const phoneUrl = () => relay.link() || (tailscale.remoteHost() ? `https://${tailscale.remoteHost()}` : tunnel.status().url);
 const startOptions = b => ({ model:String(b.model || ''), skipPermissions:b.skipPermissions === true, name:String(b.name || '') });
 
 async function handleAuth(req, res, url) {
   const key = `${req.method} ${url.pathname}`;
   const local = isLocal(req);
-  const secure = local ? '' : '; Secure';
+  const secure = isHttps(req) ? '; Secure' : '';
   const cookie = token => ({ 'set-cookie':`lookout=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${30 * 86400}${secure}` });
   if (key === 'GET /api/auth/state') {
     const device = auth.deviceFor(auth.cookieToken(req));
@@ -284,6 +301,7 @@ async function handleAuth(req, res, url) {
       if (auth.recordFailure(ip) === 20) push.notify({ title:'Lookout: many failed sign-ins', body:'20 wrong passwords in the last hour.', url:'/#/settings' });
       throw fail('Wrong password.', 401);
     }
+    if (local) auth.ensureRelayKey(body.password);
     const paired = !local && auth.usePairingCode(body.pair);
     const { token, device } = auth.createDevice({ local, userAgent:req.headers['user-agent'], ip, paired });
     return send(res, device.approved ? 200 : 202, { ok:true, approved:device.approved }, cookie(token));
@@ -328,6 +346,53 @@ async function serveFile(req, res, url) {
   fs.createReadStream(file).pipe(res);
 }
 
+// The relay's installed app should reopen this Mac: point the Home Screen icon at /m/<id>.
+function serveManifest(res, macId) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(publicDir, 'manifest.webmanifest'), 'utf8'));
+  if (/^[a-z2-7]{16}$/.test(macId || '')) manifest.start_url = `/m/${macId}/?source=homescreen`;
+  res.writeHead(200, { ...security, 'content-type':'application/manifest+json', 'cache-control':'no-cache' });
+  res.end(JSON.stringify(manifest));
+}
+
+// An encrypted request from a phone: open it with the relay key, replay it on loopback as a remote request,
+// and seal the reply. Nonces are single-use and timestamps must be fresh, so captured envelopes can't be replayed.
+const seenNonces = new Map();
+let relayCryptoKey = null;
+async function handleEnvelope(req, res) {
+  const info = auth.relayKeyInfo();
+  if (!info) throw fail('Relay encryption is not set up on this Mac yet.', 409);
+  const ip = clientIp(req);
+  if (!auth.loginAllowed(ip)) throw fail('Too many attempts. Wait a minute.', 429);
+  const { nonce, box } = await readBody(req, 2 << 20);
+  if (typeof nonce !== 'string' || nonce.length < 16 || nonce.length > 64) throw fail('Bad envelope.');
+  if (!relayCryptoKey || relayCryptoKey.raw !== info.key.toString('base64')) relayCryptoKey = { raw:info.key.toString('base64'), key:await e2e.importKey(info.key) };
+  let inner;
+  try { inner = await e2e.open(relayCryptoKey.key, box, e2e.requestAad(nonce)); }
+  catch { auth.recordFailure(ip); throw fail('Wrong password.', 401); }
+  const now = Date.now();
+  for (const [n, t] of seenNonces) if (now - t > 300000) seenNonces.delete(n);
+  if (seenNonces.has(nonce) || Math.abs(now - Number(inner.ts)) > 120000) throw fail('Stale request. Check the phone\'s clock.', 409);
+  seenNonces.set(nonce, now);
+  if (typeof inner.path !== 'string' || !inner.path.startsWith('/api/') || inner.path.startsWith('/api/e2e') || !['GET', 'POST'].includes(inner.method)) throw fail('Bad request.');
+  const payload = inner.method === 'POST' ? Buffer.from(JSON.stringify(inner.body ?? {})) : null;
+  const reply = await new Promise((resolve, reject) => {
+    const r = http.request({ host:'127.0.0.1', port:req.socket.localPort, method:inner.method, path:inner.path, headers:{
+      host:`localhost:${req.socket.localPort}`, 'x-lookout-inner':INNER_TOKEN, 'x-lookout-relay-ip':ip, 'x-lookout-relay-proto':req.headers['x-lookout-relay-proto'] || 'https',
+      ...(req.headers.cookie ? { cookie:req.headers.cookie } : {}), ...(payload ? { 'content-type':'application/json', 'x-lookout':'1', 'content-length':payload.length } : {}),
+    } }, up => {
+      const chunks = [];
+      let size = 0;
+      up.on('data', c => { size += c.length; if (size > 40 << 20) { up.destroy(); reject(fail('File too large for the relay.', 413)); } else chunks.push(c); });
+      up.on('end', () => resolve({ status:up.statusCode, headers:up.headers, body:Buffer.concat(chunks) }));
+    });
+    r.on('error', reject);
+    r.end(payload || undefined);
+  });
+  const sealed = await e2e.seal(relayCryptoKey.key, { status:reply.status, type:reply.headers['content-type'] || '', disposition:reply.headers['content-disposition'] || '', body:reply.body.toString('base64') }, e2e.responseAad(nonce));
+  // Cookies stay outside the envelope so the browser stores them; without the key they are useless to the relay.
+  send(res, 200, { box:sealed }, reply.headers['set-cookie'] ? { 'set-cookie':reply.headers['set-cookie'] } : {});
+}
+
 function serveStatic(res, pathname) {
   const file = path.normalize(path.join(publicDir, pathname === '/' ? 'index.html' : pathname));
   if (!file.startsWith(publicDir)) return send(res, 404, 'Not found');
@@ -343,9 +408,15 @@ export function createServer() {
   auth.hookToken();
   return http.createServer(async (req, res) => {
     try {
-      if (!hostAllowed(req)) throw fail('Bad host', 421);
+      const relayed = viaRelay(req);
+      if (!relayed && !unwrapped(req) && !hostAllowed(req)) throw fail('Bad host', 421);
       const url = new URL(req.url, 'http://localhost');
+      if (url.pathname === '/relay-info') return send(res, 200, relayed ? { relay:true, ...(auth.relayKeyInfo() ? { salt:auth.relayKeyInfo().salt, iterations:auth.relayKeyInfo().iterations } : { unavailable:true }) } : { relay:false });
+      // Through a relay only the app's public files and sealed envelopes pass; everything private is inside them.
+      if (relayed && url.pathname !== '/api/e2e' && (url.pathname.startsWith('/api/') || url.pathname.startsWith('/hook/'))) throw fail('Use the encrypted channel.', 403);
+      if (url.pathname === '/api/e2e' && req.method === 'POST') return await handleEnvelope(req, res);
       if (url.pathname === '/hook/permission' && req.method === 'POST') return await handleHook(req, res);
+      if (url.pathname === '/manifest.webmanifest' && relayed) return serveManifest(res, req.headers['x-lookout-relay-mac']);
       if (!url.pathname.startsWith('/api/')) return serveStatic(res, url.pathname);
       // Browsers cannot add custom headers cross-site without a preflight we never approve, so this blocks CSRF.
       if (req.method !== 'GET' && req.headers['x-lookout'] !== '1') throw fail('Missing x-lookout header', 403);
@@ -376,6 +447,7 @@ export function main() {
   tailscale.boot();
   power.apply();
   createServer().listen(PORT, '127.0.0.1', () => console.log(`Lookout running at http://localhost:${PORT}`));
+  relay.boot(PORT);
   preview.createProxy().listen(preview.PREVIEW_PORT, '127.0.0.1');
 }
 

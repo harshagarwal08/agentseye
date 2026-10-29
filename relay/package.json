@@ -1,0 +1,12 @@
+{
+  "name": "lookout-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev:worker": "wrangler dev --port 8788",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": { "ws": "^8.22.0" },
+  "devDependencies": { "wrangler": "^4" }
+}

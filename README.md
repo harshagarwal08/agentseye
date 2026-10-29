@@ -39,6 +39,7 @@ Processes (quit/force quit), Network (listening ports, exposed vs local), Startu
 Home → **Preview dev server** lists dev servers on the Mac (node, bun, python…) and opens one on your phone through a signed-in proxy on its own origin (port 4490), including websockets for hot reload. Over Tailscale it uses `https://<mac>.ts.net:8443`, otherwise a second Cloudflare link.
 
 ## Phone access & security
+- **Lookout relay (recommended, nothing to install)**: Lookout connects *out* to a relay you deploy free on Cloudflare (`relay/README.md`); your phone opens `https://<relay>/m/<mac-id>`. Works on company Macs behind proxies, no admin rights. Everything is end-to-end encrypted with a key derived from your password — the relay only routes ciphertext.
 - **Tailscale (recommended)**: `tailscale serve` gives a private, permanent `https://<mac>.<tailnet>.ts.net`, reachable only from your devices.
 - Cloudflare Quick Tunnel (URL changes on restart; Lookout follows it).
 - Password + **device approval on the Mac**; scanning the QR (single-use, 10 min) skips approval.

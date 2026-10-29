@@ -1,0 +1,11 @@
+name = "lookout-relay"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[[durable_objects.bindings]]
+name = "MACS"
+class_name = "MacRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MacRoom"]
