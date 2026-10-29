@@ -7,7 +7,7 @@ import { HOME } from './paths.js';
 // Usage limits, read the way each CLI reads them:
 // - Claude Code: its OAuth usage endpoint, with the token Claude Code keeps in the macOS Keychain (live, exact).
 // - Codex: the rate_limits it records in its session logs (exact, but only as fresh as the last Codex request).
-// Lookout never refreshes or stores these tokens; if Claude's has expired, opening Claude Code renews it.
+// AgentsEye never refreshes or stores these tokens; if Claude's has expired, opening Claude Code renews it.
 
 const cache = { claude:{ at:0, value:null }, codex:{ at:0, value:null } };
 

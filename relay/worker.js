@@ -11,11 +11,11 @@ export default {
       if (request.headers.get('upgrade') !== 'websocket') return new Response('Expected a WebSocket', { status:426 });
       return env.MACS.get(env.MACS.idFromName(mac)).fetch(request);
     }
-    const r = route(request);
+    const r = route(request, { repo:env.REPO || '' });
     if (r.response) return r.response;
     const forwarded = new Request(request);
-    forwarded.headers.set('x-lookout-mac', r.macId);
-    forwarded.headers.set('x-lookout-ip', request.headers.get('cf-connecting-ip') || '');
+    forwarded.headers.set('x-agentseye-mac', r.macId);
+    forwarded.headers.set('x-agentseye-ip', request.headers.get('cf-connecting-ip') || '');
     return env.MACS.get(env.MACS.idFromName(r.macId)).fetch(forwarded);
   },
 };
@@ -45,7 +45,7 @@ export class MacRoom {
       server.addEventListener('error', handlers.close);
       return new Response(null, { status:101, webSocket:client });
     }
-    const ip = request.headers.get('x-lookout-ip') || '';
+    const ip = request.headers.get('x-agentseye-ip') || '';
     return this.room.forward(request, { ip });
   }
 }

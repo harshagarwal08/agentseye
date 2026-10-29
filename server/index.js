@@ -19,6 +19,7 @@ import * as power from './power.js';
 import * as preview from './preview.js';
 import * as service from './service.js';
 import * as relay from './relay-client.js';
+import * as updater from './updater.js';
 import * as e2e from '../public/e2e.js';
 import { hasSubscriptions } from './push.js';
 import * as push from './push.js';
@@ -55,20 +56,20 @@ async function readBody(req, limit = 1 << 20) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw fail('Invalid JSON'); }
 }
 
-// Lookout only listens on loopback. Phones arrive through cloudflared, which also connects from loopback but
+// AgentsEye only listens on loopback. Phones arrive through cloudflared, which also connects from loopback but
 // sends the tunnel's Host and Cloudflare headers, so "local" means loopback + localhost Host + no proxy headers.
 const localHosts = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`]);
 // Relay traffic is replayed on loopback by relay-client.js and carries its per-process token; requests unwrapped
 // from an encrypted envelope carry INNER_TOKEN. Both only count when they really come from this machine.
 const INNER_TOKEN = crypto.randomBytes(24).toString('hex');
 const loopback = req => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
-const viaRelay = req => loopback(req) && req.headers['x-lookout-relay'] === relay.RELAY_TOKEN;
-const unwrapped = req => loopback(req) && req.headers['x-lookout-inner'] === INNER_TOKEN;
-const isLocal = req => localHosts.has(req.headers.host) && !req.headers['cf-connecting-ip'] && !req.headers['x-forwarded-for'] && !req.headers['tailscale-user-login'] && !req.headers['x-lookout-relay'] && !req.headers['x-lookout-inner'];
+const viaRelay = req => loopback(req) && req.headers['x-agentseye-relay'] === relay.RELAY_TOKEN;
+const unwrapped = req => loopback(req) && req.headers['x-agentseye-inner'] === INNER_TOKEN;
+const isLocal = req => localHosts.has(req.headers.host) && !req.headers['cf-connecting-ip'] && !req.headers['x-forwarded-for'] && !req.headers['tailscale-user-login'] && !req.headers['x-agentseye-relay'] && !req.headers['x-agentseye-inner'];
 const remoteHosts = () => [tunnel.remoteHost(), tailscale.remoteHost()].filter(Boolean);
 const hostAllowed = req => localHosts.has(req.headers.host) || remoteHosts().includes(req.headers.host);
-const clientIp = req => ((viaRelay(req) || unwrapped(req)) && req.headers['x-lookout-relay-ip']) || req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '';
-const isHttps = req => ((viaRelay(req) || unwrapped(req)) ? req.headers['x-lookout-relay-proto'] === 'https' : !isLocal(req));
+const clientIp = req => ((viaRelay(req) || unwrapped(req)) && req.headers['x-agentseye-relay-ip']) || req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '';
+const isHttps = req => ((viaRelay(req) || unwrapped(req)) ? req.headers['x-agentseye-relay-proto'] === 'https' : !isLocal(req));
 const localOnly = req => { if (!isLocal(req)) throw fail('Only possible on the Mac itself.', 403); };
 
 // ---------- helpers for routes ----------
@@ -188,7 +189,7 @@ const routes = {
     let pairingAt = 0;
     if (local && phoneUrl()) pairingAt = currentPairing().createdAt;
     return {
-      tailscale:await tailscale.status(), power:await power.status(), phoneUrl:phoneUrl(), relay:{ ...relay.status(), keyReady:Boolean(auth.relayKeyInfo()) },
+      version:updater.status(), tailscale:await tailscale.status(), power:await power.status(), phoneUrl:phoneUrl(), relay:{ ...relay.status(), keyReady:Boolean(auth.relayKeyInfo()) },
       tunnel:{ ...tunnel.status(), status:installed ? tunnel.status().status : 'missing' }, installingCloudflared:updates.installing('cloudflared'), pairingAt,
       hook:hookStatus(), approvals:approvals.settings(), history:approvals.list().history,
       devices:auth.listDevices(), deviceId:device.id,
@@ -198,7 +199,7 @@ const routes = {
     localOnly(req);
     if (b.password && !auth.checkPassword(String(b.password))) throw fail('Wrong password.', 401);
     if (b.password) auth.ensureRelayKey(String(b.password));
-    if (b.enabled && !auth.relayKeyInfo()) throw fail('Enter your Lookout password once to turn on encryption for the relay.', 409);
+    if (b.enabled && !auth.relayKeyInfo()) throw fail('Enter your AgentsEye password once to turn on encryption for the relay.', 409);
     return relay.configure({ url:b.url, enabled:b.enabled });
   },
   'POST /api/tailscale':async (b, _, req) => { localOnly(req); return tailscale.setServing(Boolean(b.on)); },
@@ -261,7 +262,7 @@ const routes = {
   'GET /api/push/key':() => ({ key:push.publicKey() }),
   'POST /api/push/subscribe':(b, _, __, device) => { push.subscribe(device.id, b.subscription); return { ok:true }; },
   'POST /api/push/unsubscribe':(_, __, ___, device) => { push.unsubscribe(device.id); return { ok:true }; },
-  'POST /api/push/test':() => push.notify({ title:'Lookout', body:'Notifications are working.', url:'/', tag:'test' }).then(() => ({ ok:true })),
+  'POST /api/push/test':() => push.notify({ title:'AgentsEye', body:'Notifications are working.', url:'/', tag:'test' }).then(() => ({ ok:true })),
 
   'POST /api/devices/approve':(b, _, req) => { localOnly(req); auth.setApproval(String(b.id), true); return { ok:true }; },
   'POST /api/devices/remove':(b, _, __, device) => {
@@ -282,7 +283,7 @@ async function handleAuth(req, res, url) {
   const key = `${req.method} ${url.pathname}`;
   const local = isLocal(req);
   const secure = isHttps(req) ? '; Secure' : '';
-  const cookie = token => ({ 'set-cookie':`lookout=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${30 * 86400}${secure}` });
+  const cookie = token => ({ 'set-cookie':`agentseye=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${30 * 86400}${secure}` });
   if (key === 'GET /api/auth/state') {
     const device = auth.deviceFor(auth.cookieToken(req));
     return send(res, 200, { setup:auth.hasPassword(), local, authed:Boolean(device), approved:Boolean(device?.approved), device:device ? { name:device.name } : null });
@@ -298,7 +299,7 @@ async function handleAuth(req, res, url) {
     const ip = clientIp(req);
     if (!auth.loginAllowed(ip)) throw fail('Too many attempts. Wait a minute.', 429);
     if (!auth.checkPassword(body.password)) {
-      if (auth.recordFailure(ip) === 20) push.notify({ title:'Lookout: many failed sign-ins', body:'20 wrong passwords in the last hour.', url:'/#/settings' });
+      if (auth.recordFailure(ip) === 20) push.notify({ title:'AgentsEye: many failed sign-ins', body:'20 wrong passwords in the last hour.', url:'/#/settings' });
       throw fail('Wrong password.', 401);
     }
     if (local) auth.ensureRelayKey(body.password);
@@ -310,13 +311,13 @@ async function handleAuth(req, res, url) {
     const device = auth.deviceFor(auth.cookieToken(req));
     if (device) push.unsubscribe(device.id);
     auth.endDevice(auth.cookieToken(req));
-    return send(res, 200, { ok:true }, { 'set-cookie':`lookout=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}` });
+    return send(res, 200, { ok:true }, { 'set-cookie':`agentseye=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}` });
   }
   throw fail('Not found', 404);
 }
 
 async function handleHook(req, res) {
-  if (!isLocal(req) || !auth.validHookToken(req.headers['x-lookout-token'])) throw fail('Forbidden', 403);
+  if (!isLocal(req) || !auth.validHookToken(req.headers['x-agentseye-token'])) throw fail('Forbidden', 403);
   const { id, answer } = approvals.request(await readBody(req));
   let settled = false;
   // Claude stops the hook when the person answers in the terminal; drop the card when that happens.
@@ -377,8 +378,8 @@ async function handleEnvelope(req, res) {
   const payload = inner.method === 'POST' ? Buffer.from(JSON.stringify(inner.body ?? {})) : null;
   const reply = await new Promise((resolve, reject) => {
     const r = http.request({ host:'127.0.0.1', port:req.socket.localPort, method:inner.method, path:inner.path, headers:{
-      host:`localhost:${req.socket.localPort}`, 'x-lookout-inner':INNER_TOKEN, 'x-lookout-relay-ip':ip, 'x-lookout-relay-proto':req.headers['x-lookout-relay-proto'] || 'https',
-      ...(req.headers.cookie ? { cookie:req.headers.cookie } : {}), ...(payload ? { 'content-type':'application/json', 'x-lookout':'1', 'content-length':payload.length } : {}),
+      host:`localhost:${req.socket.localPort}`, 'x-agentseye-inner':INNER_TOKEN, 'x-agentseye-relay-ip':ip, 'x-agentseye-relay-proto':req.headers['x-agentseye-relay-proto'] || 'https',
+      ...(req.headers.cookie ? { cookie:req.headers.cookie } : {}), ...(payload ? { 'content-type':'application/json', 'x-agentseye':'1', 'content-length':payload.length } : {}),
     } }, up => {
       const chunks = [];
       let size = 0;
@@ -416,10 +417,10 @@ export function createServer() {
       if (relayed && url.pathname !== '/api/e2e' && (url.pathname.startsWith('/api/') || url.pathname.startsWith('/hook/'))) throw fail('Use the encrypted channel.', 403);
       if (url.pathname === '/api/e2e' && req.method === 'POST') return await handleEnvelope(req, res);
       if (url.pathname === '/hook/permission' && req.method === 'POST') return await handleHook(req, res);
-      if (url.pathname === '/manifest.webmanifest' && relayed) return serveManifest(res, req.headers['x-lookout-relay-mac']);
+      if (url.pathname === '/manifest.webmanifest' && relayed) return serveManifest(res, req.headers['x-agentseye-relay-mac']);
       if (!url.pathname.startsWith('/api/')) return serveStatic(res, url.pathname);
       // Browsers cannot add custom headers cross-site without a preflight we never approve, so this blocks CSRF.
-      if (req.method !== 'GET' && req.headers['x-lookout'] !== '1') throw fail('Missing x-lookout header', 403);
+      if (req.method !== 'GET' && req.headers['x-agentseye'] !== '1') throw fail('Missing x-agentseye header', 403);
       if (url.pathname.startsWith('/api/auth/')) return await handleAuth(req, res, url);
       const device = auth.deviceFor(auth.cookieToken(req));
       if (!device) throw fail('Sign in first.', 401);
@@ -446,8 +447,9 @@ export function main() {
   tunnel.boot();
   tailscale.boot();
   power.apply();
-  createServer().listen(PORT, '127.0.0.1', () => console.log(`Lookout running at http://localhost:${PORT}`));
+  createServer().listen(PORT, '127.0.0.1', () => console.log(`AgentsEye running at http://localhost:${PORT}`));
   relay.boot(PORT);
+  updater.boot();
   preview.createProxy().listen(preview.PREVIEW_PORT, '127.0.0.1');
 }
 

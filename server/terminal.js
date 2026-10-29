@@ -3,7 +3,7 @@ import path from 'node:path';
 import { run } from './exec.js';
 
 // The script goes in on stdin and every value as argv, so nothing a person types is ever parsed as AppleScript.
-// If Lookout itself was started from inside an agent (or a Terminal it launches inherits from one), the
+// If AgentsEye itself was started from inside an agent (or a Terminal it launches inherits from one), the
 // agent's session markers would leak into new sessions and, for example, turn off Claude's transcript saving.
 const sessionMarker = /^(CLAUDECODE|CLAUDE_CODE_\w+|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_AGENT_SDK_VERSION|CODEX_\w*SESSION\w*)$/;
 const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !sessionMarker.test(k)));

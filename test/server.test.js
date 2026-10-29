@@ -6,11 +6,11 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lookout-test-'));
-process.env.LOOKOUT_HOME = path.join(home, '.lookout');
-process.env.LOOKOUT_USER_HOME = home;
-process.env.LOOKOUT_PORT = '4499';
-process.env.LOOKOUT_CLAUDE_SETTINGS = path.join(home, '.claude', 'settings.json');
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agentseye-test-'));
+process.env.AGENTSEYE_HOME = path.join(home, '.agentseye');
+process.env.AGENTSEYE_USER_HOME = home;
+process.env.AGENTSEYE_PORT = '4499';
+process.env.AGENTSEYE_CLAUDE_SETTINGS = path.join(home, '.claude', 'settings.json');
 
 const { createServer } = await import('../server/index.js');
 const auth = await import('../server/auth.js');
@@ -24,7 +24,7 @@ function call(route, body, { cookie = '', remote = false, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? null : JSON.stringify(body);
     const req = http.request({ host:'127.0.0.1', port:4499, path:route, method:data ? 'POST' : 'GET', headers:{
-      host:'localhost:4499', cookie, ...(data ? { 'content-type':'application/json', 'x-lookout':'1' } : {}),
+      host:'localhost:4499', cookie, ...(data ? { 'content-type':'application/json', 'x-agentseye':'1' } : {}),
       ...(remote ? { 'cf-connecting-ip':'203.0.113.9', 'user-agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1' } : {}), ...headers,
     } }, res => {
       let text = '';
@@ -43,7 +43,7 @@ function call(route, body, { cookie = '', remote = false, headers = {} } = {}) {
 let mac = '';
 test('password setup happens on the Mac and blocks CSRF', async () => {
   assert.equal((await call('/api/processes')).status, 401);
-  assert.equal((await call('/api/auth/setup', { password:'correct horse' }, { headers:{ 'x-lookout':'' } })).status, 403);
+  assert.equal((await call('/api/auth/setup', { password:'correct horse' }, { headers:{ 'x-agentseye':'' } })).status, 403);
   assert.equal((await call('/api/auth/setup', { password:'correct horse' }, { remote:true })).status, 403);
   assert.equal((await call('/api/auth/setup', { password:'short' })).status, 400);
   const setup = await call('/api/auth/setup', { password:'correct horse' });
@@ -105,21 +105,21 @@ test('hook falls through when holding is off, and only accepts local callers wit
   hook.stdin.end(JSON.stringify({ tool_name:'Write', tool_input:{} }));
   assert.equal(await new Promise(r => hook.on('close', r)), 0);
   assert.equal(out, '');
-  assert.equal((await call('/hook/permission', {}, { headers:{ 'x-lookout-token':'nope' } })).status, 403);
-  assert.equal((await call('/hook/permission', {}, { remote:true, headers:{ 'x-lookout-token':auth.hookToken() } })).status, 403);
+  assert.equal((await call('/hook/permission', {}, { headers:{ 'x-agentseye-token':'nope' } })).status, 403);
+  assert.equal((await call('/hook/permission', {}, { remote:true, headers:{ 'x-agentseye-token':auth.hookToken() } })).status, 403);
   await call('/api/approvals/settings', { hold:true }, { cookie:mac });
 });
 
 test('hook installer keeps other hooks and is idempotent', () => {
-  fs.mkdirSync(path.dirname(process.env.LOOKOUT_CLAUDE_SETTINGS), { recursive:true });
-  fs.writeFileSync(process.env.LOOKOUT_CLAUDE_SETTINGS, JSON.stringify({ model:'opus', hooks:{ PermissionRequest:[{ matcher:'Bash', hooks:[{ type:'command', command:'other' }] }] } }));
+  fs.mkdirSync(path.dirname(process.env.AGENTSEYE_CLAUDE_SETTINGS), { recursive:true });
+  fs.writeFileSync(process.env.AGENTSEYE_CLAUDE_SETTINGS, JSON.stringify({ model:'opus', hooks:{ PermissionRequest:[{ matcher:'Bash', hooks:[{ type:'command', command:'other' }] }] } }));
   installHook();
   installHook();
-  let s = JSON.parse(fs.readFileSync(process.env.LOOKOUT_CLAUDE_SETTINGS, 'utf8'));
+  let s = JSON.parse(fs.readFileSync(process.env.AGENTSEYE_CLAUDE_SETTINGS, 'utf8'));
   assert.equal(s.model, 'opus');
   assert.equal(s.hooks.PermissionRequest.length, 2);
   uninstallHook();
-  s = JSON.parse(fs.readFileSync(process.env.LOOKOUT_CLAUDE_SETTINGS, 'utf8'));
+  s = JSON.parse(fs.readFileSync(process.env.AGENTSEYE_CLAUDE_SETTINGS, 'utf8'));
   assert.deepEqual(s.hooks.PermissionRequest, [{ matcher:'Bash', hooks:[{ type:'command', command:'other' }] }]);
 });
 

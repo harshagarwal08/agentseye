@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// Capture the command Lookout would type into a new Terminal window instead of opening one.
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lookout-launch-'));
-process.env.LOOKOUT_HOME = path.join(home, '.lookout');
-process.env.LOOKOUT_USER_HOME = home;
+// Capture the command AgentsEye would type into a new Terminal window instead of opening one.
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agentseye-launch-'));
+process.env.AGENTSEYE_HOME = path.join(home, '.agentseye');
+process.env.AGENTSEYE_USER_HOME = home;
 const typed = [];
 mock.module('../server/terminal.js', { namedExports:{ openWindow:async cmd => { typed.push(cmd); return { ok:true }; } } });
 const agents = await import('../server/agents.js');

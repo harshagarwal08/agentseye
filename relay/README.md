@@ -1,10 +1,10 @@
-# Lookout relay
+# AgentsEye relay
 
-Lets your phone reach Lookout on a Mac that can't accept incoming connections — company laptops behind a proxy,
+Lets your phone reach AgentsEye on a Mac that can't accept incoming connections — company laptops behind a proxy,
 Macs where you can't install anything, any network. The Mac opens one outbound HTTPS/WebSocket connection to the
 relay; the phone talks to the relay; the relay passes requests along.
 
-**End-to-end encrypted.** Phone and Mac both derive an AES-256 key from your Lookout password (PBKDF2-SHA256,
+**End-to-end encrypted.** Phone and Mac both derive an AES-256 key from your AgentsEye password (PBKDF2-SHA256,
 600k rounds, per-Mac salt). Every API request and reply is sealed with it, single-use and timestamped. The relay
 and any proxy in between see only: which Mac, when, and how big. Never your password, sessions, files or commands.
 
@@ -17,10 +17,10 @@ principle tamper with those, so run your own (it's free) or use one your team tr
 cd relay
 npm install
 npx wrangler login        # opens a browser once
-npx wrangler deploy       # → https://lookout-relay.<your-account>.workers.dev
+npx wrangler deploy       # → https://agentseye-relay.<your-account>.workers.dev
 ```
 
-Then on the Mac: **Lookout → Settings → Lookout relay**, paste that address, enter your password once, switch it on,
+Then on the Mac: **AgentsEye → Settings → AgentsEye relay**, paste that address, enter your password once, switch it on,
 and scan the QR code with your phone.
 
 Each Mac gets its own Durable Object. The first connection for a Mac id registers a hash of its secret; nobody

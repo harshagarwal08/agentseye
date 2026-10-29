@@ -149,6 +149,6 @@ export function recordFailure(ip) {
 }
 
 export function cookieToken(req) {
-  const match = (req.headers.cookie || '').match(/(?:^|;\s*)lookout=([^;]+)/);
+  const match = (req.headers.cookie || '').match(/(?:^|;\s*)agentseye=([^;]+)/);
   return match ? match[1] : '';
 }

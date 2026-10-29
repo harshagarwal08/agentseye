@@ -4,23 +4,23 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// Phone ⇄ relay ⇄ Mac, all real: the Node relay, Lookout's server, and Lookout's outbound relay client.
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lookout-relay-'));
-process.env.LOOKOUT_HOME = path.join(home, '.lookout');
-process.env.LOOKOUT_USER_HOME = home;
-process.env.LOOKOUT_PORT = '4495';
+// Phone ⇄ relay ⇄ Mac, all real: the Node relay, AgentsEye's server, and AgentsEye's outbound relay client.
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agentseye-relay-'));
+process.env.AGENTSEYE_HOME = path.join(home, '.agentseye');
+process.env.AGENTSEYE_USER_HOME = home;
+process.env.AGENTSEYE_PORT = '4495';
 const { createServer } = await import('../server/index.js');
 const relayClient = await import('../server/relay-client.js');
 const { createRelay } = await import('../relay/server.js');
 const e2e = await import('../public/e2e.js');
 
-const lookout = createServer();
-await new Promise(r => lookout.listen(4495, '127.0.0.1', r));
+const agentseye = createServer();
+await new Promise(r => agentseye.listen(4495, '127.0.0.1', r));
 // RELAY_URL runs the same checks against another relay, such as the Cloudflare Worker under `wrangler dev`.
 const external = process.env.RELAY_URL;
 const relayServer = external ? null : createRelay();
 if (relayServer) await new Promise(r => relayServer.listen(8795, '127.0.0.1', r));
-test.after(() => { relayClient.stop(); lookout.close(); lookout.closeAllConnections(); relayServer?.close(); relayServer?.closeAllConnections(); });
+test.after(() => { relayClient.stop(); agentseye.close(); agentseye.closeAllConnections(); relayServer?.close(); relayServer?.closeAllConnections(); });
 
 const PASSWORD = 'correct horse battery';
 const R = external || 'http://127.0.0.1:8795';
@@ -35,14 +35,14 @@ let key;
 let macId;
 async function sealed(method, p, body, { k = key, nonce = e2e.b64(crypto.getRandomValues(new Uint8Array(18))), ts = Date.now() } = {}) {
   const box = await e2e.seal(k, { method, path:p, body:body ?? null, ts }, e2e.requestAad(nonce));
-  const res = await phone('/api/e2e', { method:'POST', headers:{ 'content-type':'application/json', 'x-lookout':'1' }, body:JSON.stringify({ nonce, box }) });
+  const res = await phone('/api/e2e', { method:'POST', headers:{ 'content-type':'application/json', 'x-agentseye':'1' }, body:JSON.stringify({ nonce, box }) });
   if (res.status !== 200) return { outer:res.status, text:await res.text(), nonce, box };
   const reply = await e2e.open(k, (await res.json()).box, e2e.responseAad(nonce));
   return { outer:200, status:reply.status, json:JSON.parse(Buffer.from(reply.body, 'base64').toString() || 'null'), nonce, box };
 }
 
 test('the Mac connects out to the relay', async () => {
-  const setup = await fetch('http://127.0.0.1:4495/api/auth/setup', { method:'POST', headers:{ 'content-type':'application/json', 'x-lookout':'1', host:'localhost:4495' }, body:JSON.stringify({ password:PASSWORD }) });
+  const setup = await fetch('http://127.0.0.1:4495/api/auth/setup', { method:'POST', headers:{ 'content-type':'application/json', 'x-agentseye':'1', host:'localhost:4495' }, body:JSON.stringify({ password:PASSWORD }) });
   assert.equal(setup.status, 200);
   relayClient.boot(4495);
   relayClient.configure({ url:R, enabled:true });
@@ -61,8 +61,8 @@ test('the Mac connects out to the relay', async () => {
 test('the phone opens the app through the relay; private API calls must be sealed', async () => {
   const pair = await phone(`/m/${macId}`);
   assert.equal(pair.status, 302);
-  assert.equal(jar.lookout_mac, macId);
-  assert.match(await (await phone('/')).text(), /<title>Lookout<\/title>/);
+  assert.equal(jar.agentseye_mac, macId);
+  assert.match(await (await phone('/')).text(), /<title>AgentsEye<\/title>/);
   const manifest = await (await phone('/manifest.webmanifest')).json();
   assert.equal(manifest.start_url, `/m/${macId}/?source=homescreen`);
   const info = await (await phone('/relay-info')).json();
@@ -79,14 +79,14 @@ test('wrong password is rejected; sign-in and approval work end to end', async (
   assert.equal((await sealed('GET', '/api/auth/state')).json.authed, false);
   const login = await sealed('POST', '/api/auth/login', { password:PASSWORD });
   assert.equal(login.status, 202);
-  assert.ok(jar.lookout, 'device cookie set through the relay');
+  assert.ok(jar.agentseye, 'device cookie set through the relay');
   assert.equal((await sealed('GET', '/api/home')).status, 423);
   // Approve on the Mac, then the phone is in.
-  const macCookie = (await fetch('http://127.0.0.1:4495/api/auth/login', { method:'POST', headers:{ 'content-type':'application/json', 'x-lookout':'1' }, body:JSON.stringify({ password:PASSWORD }) })).headers.getSetCookie()[0].split(';')[0];
+  const macCookie = (await fetch('http://127.0.0.1:4495/api/auth/login', { method:'POST', headers:{ 'content-type':'application/json', 'x-agentseye':'1' }, body:JSON.stringify({ password:PASSWORD }) })).headers.getSetCookie()[0].split(';')[0];
   const devices = await (await fetch('http://127.0.0.1:4495/api/settings', { headers:{ cookie:macCookie } })).json();
   const pending = devices.devices.find(d => !d.approved);
   assert.equal(pending.remote, true);
-  await fetch('http://127.0.0.1:4495/api/devices/approve', { method:'POST', headers:{ cookie:macCookie, 'content-type':'application/json', 'x-lookout':'1' }, body:JSON.stringify({ id:pending.id }) });
+  await fetch('http://127.0.0.1:4495/api/devices/approve', { method:'POST', headers:{ cookie:macCookie, 'content-type':'application/json', 'x-agentseye':'1' }, body:JSON.stringify({ id:pending.id }) });
   const homeData = await sealed('GET', '/api/home');
   assert.equal(homeData.status, 200);
   assert.ok(Array.isArray(homeData.json.sessions));
@@ -100,7 +100,7 @@ test('large replies stream through in chunks', async () => {
 
 test('replays, stale envelopes and Mac-only actions are refused', async () => {
   const first = await sealed('GET', '/api/badges');
-  const again = await phone('/api/e2e', { method:'POST', headers:{ 'content-type':'application/json', 'x-lookout':'1' }, body:JSON.stringify({ nonce:first.nonce, box:first.box }) });
+  const again = await phone('/api/e2e', { method:'POST', headers:{ 'content-type':'application/json', 'x-agentseye':'1' }, body:JSON.stringify({ nonce:first.nonce, box:first.box }) });
   assert.equal(again.status, 409);
   assert.equal((await sealed('GET', '/api/badges', null, { ts:Date.now() - 10 * 60000 })).outer, 409);
   assert.equal((await sealed('POST', '/api/tunnel', { on:true })).status, 403);
@@ -128,7 +128,7 @@ test('a stranger cannot take over this Mac id on the relay', async () => {
 test('when the Mac goes away the phone gets a clear offline answer', async () => {
   relayClient.stop();
   await new Promise(r => setTimeout(r, 200));
-  const res = await phone('/api/e2e', { method:'POST', headers:{ 'content-type':'application/json', 'x-lookout':'1' }, body:'{}' });
+  const res = await phone('/api/e2e', { method:'POST', headers:{ 'content-type':'application/json', 'x-agentseye':'1' }, body:'{}' });
   assert.equal(res.status, 503);
   const page = await phone('/', { headers:{ accept:'text/html' } });
   assert.equal(page.status, 503);

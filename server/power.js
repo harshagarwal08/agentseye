@@ -4,7 +4,7 @@ import { run } from './exec.js';
 import { DATA, readJson, writeJson } from './paths.js';
 
 // Keeping agents alive while you are away:
-// - Keep awake: Lookout holds a `caffeinate` assertion, so idle sleep never stops your agents. The display may
+// - Keep awake: AgentsEye holds a `caffeinate` assertion, so idle sleep never stops your agents. The display may
 //   still turn off (and lock); macOS still sleeps when the lid closes.
 // - Lid closed: macOS only keeps running with the lid shut if sleep is disabled system-wide (`pmset disablesleep`).
 //   That needs an administrator password, so it can only be switched on the Mac itself.

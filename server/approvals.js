@@ -47,7 +47,7 @@ export function decide(id, decision, message) {
   clearTimeout(entry.timer);
   pending.delete(id);
   record(entry, decision, 'dashboard');
-  entry.resolve({ decision, message:message || (decision === 'deny' ? 'Denied from Lookout.' : '') });
+  entry.resolve({ decision, message:message || (decision === 'deny' ? 'Denied from AgentsEye.' : '') });
 }
 
 // If Claude gives up (user answered in the terminal, session closed), the hook disconnects and we drop the card.

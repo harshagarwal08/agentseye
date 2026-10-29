@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Lookout",
-  "short_name": "Lookout",
+  "name": "AgentsEye",
+  "short_name": "AgentsEye",
   "description": "Your Mac and its coding agents, in your pocket.",
   "start_url": "/?source=homescreen",
   "scope": "/",

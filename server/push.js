@@ -27,8 +27,8 @@ export const subscribed = deviceId => Boolean(subs()[deviceId]);
 
 export async function notify({ title, body, url = '/', tag }) {
   const k = keys();
-  // Apple rejects push senders that identify as localhost, so use a real-looking contact (override with LOOKOUT_PUSH_CONTACT).
-  webpush.setVapidDetails(process.env.LOOKOUT_PUSH_CONTACT || 'mailto:lookout@users.noreply.github.com', k.publicKey, k.privateKey);
+  // Apple rejects push senders that identify as localhost, so use a real-looking contact (override with AGENTSEYE_PUSH_CONTACT).
+  webpush.setVapidDetails(process.env.AGENTSEYE_PUSH_CONTACT || 'mailto:agentseye@users.noreply.github.com', k.publicKey, k.privateKey);
   const all = subs();
   let changed = false;
   await Promise.all(Object.entries(all).map(async ([device, sub]) => {

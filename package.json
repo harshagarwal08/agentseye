@@ -1,12 +1,12 @@
 {
-  "name": "lookout",
+  "name": "agentseye",
   "version": "0.1.0",
-  "description": "See everything running on your Mac: coding agents, processes, ports, startup items, updates and permissions.",
+  "description": "Your coding agents, in your pocket: see and control Claude Code and Codex on your Mac from your phone. End-to-end encrypted, works on company Macs.",
   "license": "MIT",
   "private": true,
   "type": "module",
   "bin": {
-    "lookout": "bin/lookout.js"
+    "agentseye": "bin/agentseye.js"
   },
   "scripts": {
     "start": "node server/index.js",
@@ -20,5 +20,32 @@
     "qrcode": "^1.5.4",
     "web-push": "^3.6.7",
     "ws": "^8.22.0"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "ai-agents",
+    "remote",
+    "phone",
+    "pwa",
+    "macos",
+    "developer-tools"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "files": [
+    "bin",
+    "server",
+    "public",
+    "hooks",
+    "relay/core.js",
+    "relay/install.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-github-user/agentseye.git"
   }
 }

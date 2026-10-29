@@ -4,8 +4,8 @@ import path from 'node:path';
 import { DATA, PORT, readJson, writeJson } from './paths.js';
 
 // The Mac side of the relay: one outbound WebSocket (ordinary HTTPS traffic, so it works behind company proxies
-// and needs nothing installed). Requests arriving on it are replayed against Lookout on loopback and the replies
-// streamed back. Lookout only accepts them as relay traffic when they carry this process's random token.
+// and needs nothing installed). Requests arriving on it are replayed against AgentsEye on loopback and the replies
+// streamed back. AgentsEye only accepts them as relay traffic when they carry this process's random token.
 export const RELAY_TOKEN = crypto.randomBytes(24).toString('hex');
 const file = path.join(DATA, 'relay.json');
 const CHUNK = 192 * 1024;
@@ -18,7 +18,7 @@ export function settings() {
   let s = readJson(file, null);
   if (!s?.macId) {
     // The id names this Mac on the relay; the secret proves it is the same Mac next time.
-    s = { url:process.env.LOOKOUT_RELAY_URL || '', enabled:false, macId:base32(crypto.randomBytes(16)), secret:crypto.randomBytes(32).toString('base64url') };
+    s = { url:process.env.AGENTSEYE_RELAY_URL || '', enabled:false, macId:base32(crypto.randomBytes(16)), secret:crypto.randomBytes(32).toString('base64url') };
     writeJson(file, s);
   }
   return s;
@@ -35,7 +35,7 @@ export function configure({ url, enabled }) {
   const s = settings();
   if (url !== undefined) {
     const clean = origin(url);
-    if (clean && !/^https?:\/\/[^\s/]+$/.test(clean)) throw Object.assign(new Error('Enter the relay address, like https://lookout-relay.you.workers.dev'), { status:400 });
+    if (clean && !/^https?:\/\/[^\s/]+$/.test(clean)) throw Object.assign(new Error('Enter the relay address, like https://agentseye-relay.you.workers.dev'), { status:400 });
     s.url = clean;
   }
   if (enabled !== undefined) s.enabled = Boolean(enabled);
@@ -93,10 +93,10 @@ function retry() {
   state.timer = setTimeout(connect, delay);
 }
 
-// Replays one request against Lookout on loopback and streams the reply back in chunks.
+// Replays one request against AgentsEye on loopback and streams the reply back in chunks.
 function handle(ws, m) {
   const send = obj => { try { ws.send(JSON.stringify(obj)); } catch {} };
-  const headers = { ...m.headers, host:`localhost:${state.port}`, 'x-lookout-relay':RELAY_TOKEN, 'x-lookout-relay-ip':String(m.ip || ''), 'x-lookout-relay-proto':m.proto === 'https' ? 'https' : 'http', 'x-lookout-relay-mac':settings().macId };
+  const headers = { ...m.headers, host:`localhost:${state.port}`, 'x-agentseye-relay':RELAY_TOKEN, 'x-agentseye-relay-ip':String(m.ip || ''), 'x-agentseye-relay-proto':m.proto === 'https' ? 'https' : 'http', 'x-agentseye-relay-mac':settings().macId };
   const req = http.request({ host:'127.0.0.1', port:state.port, method:m.method, path:m.path, headers }, res => {
     const out = [];
     for (let i = 0; i < res.rawHeaders.length; i += 2) if (!HOP.has(res.rawHeaders[i].toLowerCase())) out.push([res.rawHeaders[i], res.rawHeaders[i + 1]]);
@@ -109,7 +109,7 @@ function handle(ws, m) {
     res.on('end', () => { if (buffered.length) send({ t:'body', id:m.id, data:buffered.toString('base64') }); send({ t:'end', id:m.id }); });
     res.on('error', () => send({ t:'error', id:m.id }));
   });
-  req.on('error', () => send({ t:'error', id:m.id, message:'Lookout on your Mac is not answering.' }));
+  req.on('error', () => send({ t:'error', id:m.id, message:'AgentsEye on your Mac is not answering.' }));
   req.end(m.body ? Buffer.from(m.body, 'base64') : undefined);
 }
 

@@ -30,7 +30,7 @@ export function createRelay({ dataFile = '' } = {}) {
       for await (const c of req) chunks.push(c);
       const body = chunks.length && !['GET', 'HEAD'].includes(req.method) ? Buffer.concat(chunks) : undefined;
       const request = new Request(url, { method:req.method, headers:Object.entries(req.headers).filter(([, v]) => typeof v === 'string'), body });
-      const r = route(request);
+      const r = route(request, { repo:process.env.REPO || '' });
       const response = r.response || await roomFor(r.macId).forward(request, { ip:req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress });
       const headers = {};
       response.headers.forEach((v, k) => { if (k === 'set-cookie') (headers[k] ||= []).push(v); else headers[k] = v; });
@@ -62,5 +62,5 @@ export function createRelay({ dataFile = '' } = {}) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 8787);
   const dataFile = process.env.RELAY_DATA || path.join(process.cwd(), 'relay-data.json');
-  createRelay({ dataFile }).listen(port, () => console.log(`Lookout relay on http://localhost:${port}`));
+  createRelay({ dataFile }).listen(port, () => console.log(`AgentsEye relay on http://localhost:${port}`));
 }

@@ -1,5 +1,5 @@
 {
-  "name": "lookout-relay",
+  "name": "agentseye-relay",
   "private": true,
   "type": "module",
   "scripts": {

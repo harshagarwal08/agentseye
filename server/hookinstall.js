@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { HOME } from './paths.js';
 
 const hookScript = fileURLToPath(new URL('../hooks/permission-hook.mjs', import.meta.url));
-export const settingsPath = () => process.env.LOOKOUT_CLAUDE_SETTINGS || path.join(HOME, '.claude', 'settings.json');
+export const settingsPath = () => process.env.AGENTSEYE_CLAUDE_SETTINGS || path.join(HOME, '.claude', 'settings.json');
 const command = () => `${JSON.stringify(process.execPath)} ${JSON.stringify(hookScript)}`;
 const ours = hook => typeof hook?.command === 'string' && hook.command.includes('permission-hook.mjs');
 
@@ -15,7 +15,7 @@ function load() {
 function save(settings) {
   const file = settingsPath();
   fs.mkdirSync(path.dirname(file), { recursive:true });
-  if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.lookout-backup`);
+  if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.agentseye-backup`);
   fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
@@ -28,7 +28,7 @@ export function installHook() {
   const settings = load();
   settings.hooks ??= {};
   const groups = (settings.hooks.PermissionRequest || []).map(g => ({ ...g, hooks:(g.hooks || []).filter(h => !ours(h)) })).filter(g => g.hooks.length);
-  // The timeout must outlast the longest wait Lookout allows (600 s).
+  // The timeout must outlast the longest wait AgentsEye allows (600 s).
   groups.push({ matcher:'*', hooks:[{ type:'command', command:command(), timeout:660 }] });
   settings.hooks.PermissionRequest = groups;
   save(settings);

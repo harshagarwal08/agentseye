@@ -1,7 +1,7 @@
-// The app shell (HTML, CSS, scripts, icons) is cached so Lookout opens instantly from the Home Screen and can
+// The app shell (HTML, CSS, scripts, icons) is cached so AgentsEye opens instantly from the Home Screen and can
 // show "Can't reach your Mac" offline. It is network-first, so a new version shows up on the next open.
 // Live data (/api) is never cached.
-const SHELL = 'lookout-shell-v4';
+const SHELL = 'agentseye-shell-v4';
 const FILES = ['/', '/index.html', '/style.css', '/app.js', '/avatars.js', '/markdown.js', '/e2e.js', '/icon.svg', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', event => {
@@ -22,8 +22,8 @@ self.addEventListener('fetch', event => {
 
 self.addEventListener('push', event => {
   let data = {};
-  try { data = event.data.json(); } catch { data = { title:'Lookout', body:event.data?.text() || '' }; }
-  event.waitUntil(self.registration.showNotification(data.title || 'Lookout', { body:data.body || '', tag:data.tag, renotify:Boolean(data.tag), data:{ url:data.url || '/' }, icon:'/icon-192.png', badge:'/icon-192.png' }));
+  try { data = event.data.json(); } catch { data = { title:'AgentsEye', body:event.data?.text() || '' }; }
+  event.waitUntil(self.registration.showNotification(data.title || 'AgentsEye', { body:data.body || '', tag:data.tag, renotify:Boolean(data.tag), data:{ url:data.url || '/' }, icon:'/icon-192.png', badge:'/icon-192.png' }));
 });
 self.addEventListener('notificationclick', event => {
   event.notification.close();

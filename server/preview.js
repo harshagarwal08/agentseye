@@ -9,18 +9,18 @@ import * as tailscale from './tailscale.js';
 
 // Preview a dev server running on the Mac (say localhost:3000) from your phone.
 // A second listener on loopback forwards every request, including websockets for hot reload, to the chosen port.
-// It is a separate origin from Lookout so the app's absolute paths (/assets/x.js) just work, and it only serves
-// browsers holding a preview cookie that Lookout hands out to signed-in devices.
-export const PREVIEW_PORT = Number(process.env.LOOKOUT_PREVIEW_PORT || PORT + 10);
+// It is a separate origin from AgentsEye so the app's absolute paths (/assets/x.js) just work, and it only serves
+// browsers holding a preview cookie that AgentsEye hands out to signed-in devices.
+export const PREVIEW_PORT = Number(process.env.AGENTSEYE_PREVIEW_PORT || PORT + 10);
 const state = { target:0, cfUrl:'', cfChild:null, tsUrl:'' };
 const passes = new Map();
 const sessions = new Set();
 const sha = v => crypto.createHash('sha256').update(v).digest('hex');
 
-const cookieOf = req => (req.headers.cookie || '').match(/(?:^|;\s*)lookout_preview=([^;]+)/)?.[1] || '';
+const cookieOf = req => (req.headers.cookie || '').match(/(?:^|;\s*)agentseye_preview=([^;]+)/)?.[1] || '';
 const authed = req => sessions.has(sha(cookieOf(req)));
 
-// Lookout's own process, the preview proxy and system services are never offered as previews.
+// AgentsEye's own process, the preview proxy and system services are never offered as previews.
 const devPrograms = /^(node|bun|deno|python[\d.]*|ruby|php|java|go|cargo|rails|uvicorn|gunicorn|vite|next-server|esbuild|hugo|jekyll|dotnet|beam\.smp|flask)/i;
 export function candidates(ports) {
   const own = new Set([PORT, PREVIEW_PORT]);
@@ -71,7 +71,7 @@ export async function open(port, { local }) {
   }
   const pass = crypto.randomBytes(24).toString('base64url');
   passes.set(pass, Date.now() + 60000);
-  return { url:`${base}/__lookout/enter?t=${pass}`, port };
+  return { url:`${base}/__agentseye/enter?t=${pass}`, port };
 }
 
 let closeAll = () => {};
@@ -85,13 +85,13 @@ export const status = () => ({ port:state.target });
 
 function deny(res, code, text) {
   res.writeHead(code, { 'content-type':'text/html; charset=utf-8', 'cache-control':'no-store' });
-  res.end(`<!doctype html><meta name="viewport" content="width=device-width"><body style="font:16px -apple-system,sans-serif;padding:40px;text-align:center;background:#f6f1e7;color:#2b2620"><h2>${text}</h2><p>Open the preview again from Lookout.</p></body>`);
+  res.end(`<!doctype html><meta name="viewport" content="width=device-width"><body style="font:16px -apple-system,sans-serif;padding:40px;text-align:center;background:#f6f1e7;color:#2b2620"><h2>${text}</h2><p>Open the preview again from AgentsEye.</p></body>`);
 }
 
 export function createProxy() {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
-    if (url.pathname === '/__lookout/enter') {
+    if (url.pathname === '/__agentseye/enter') {
       const t = url.searchParams.get('t') || '';
       const exp = passes.get(t);
       passes.delete(t);
@@ -99,14 +99,14 @@ export function createProxy() {
       const token = crypto.randomBytes(32).toString('base64url');
       sessions.add(sha(token));
       const secure = req.headers['x-forwarded-proto'] === 'https' || req.headers['cf-visitor']?.includes('https') || req.headers['tailscale-user-login'] ? '; Secure' : '';
-      res.writeHead(302, { location:'/', 'set-cookie':`lookout_preview=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200${secure}` });
+      res.writeHead(302, { location:'/', 'set-cookie':`agentseye_preview=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200${secure}` });
       return res.end();
     }
     if (!authed(req)) return deny(res, 401, 'Not signed in to this preview.');
     if (!state.target) return deny(res, 410, 'No preview is open.');
     const headers = { ...req.headers, host:`localhost:${state.target}` };
     delete headers['accept-encoding'];
-    headers.cookie = String(headers.cookie || '').split(/;\s*/).filter(c => c && !c.startsWith('lookout_preview=')).join('; ') || undefined;
+    headers.cookie = String(headers.cookie || '').split(/;\s*/).filter(c => c && !c.startsWith('agentseye_preview=')).join('; ') || undefined;
     if (!headers.cookie) delete headers.cookie;
     const upstream = http.request({ host:'127.0.0.1', port:state.target, method:req.method, path:req.url, headers }, up => {
       res.writeHead(up.statusCode, up.headers);

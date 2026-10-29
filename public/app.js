@@ -25,7 +25,7 @@ class ApiError extends Error {
 const offlineMessage = "Can't reach your Mac. It may be asleep or offline.";
 
 // ---------- Relay mode ----------
-// Through a Lookout relay, every API call is sealed with a key derived from your password, so neither the relay
+// Through a AgentsEye relay, every API call is sealed with a key derived from your password, so neither the relay
 // nor a company proxy can read it. The Mac says whether this page came through a relay (/relay-info).
 const relay = { on:false, info:null, key:null };
 async function detectRelay() {
@@ -52,7 +52,7 @@ const forgetKey = () => { localStorage.removeItem('relay-key'); relay.key = null
 
 // One request, plain or sealed. Returns { status, data } with data parsed JSON (or a Blob for files).
 async function transport(path, body, signal) {
-  const init = body === undefined ? {} : { method:'POST', headers:{ 'content-type':'application/json', 'x-lookout':'1' }, body:JSON.stringify(body) };
+  const init = body === undefined ? {} : { method:'POST', headers:{ 'content-type':'application/json', 'x-agentseye':'1' }, body:JSON.stringify(body) };
   if (!relay.on) {
     const res = await fetch(path, { signal, ...init });
     return { status:res.status, data:await res.json().catch(() => null) };
@@ -61,7 +61,7 @@ async function transport(path, body, signal) {
   if (!key) throw new ApiError('Enter your password to unlock.', 'locked', 401);
   const nonce = e2e.b64(crypto.getRandomValues(new Uint8Array(18)));
   const box = await e2e.seal(key, { method:body === undefined ? 'GET' : 'POST', path, body:body ?? null, ts:Date.now() }, e2e.requestAad(nonce));
-  const res = await fetch('/api/e2e', { signal, method:'POST', headers:{ 'content-type':'application/json', 'x-lookout':'1' }, body:JSON.stringify({ nonce, box }) });
+  const res = await fetch('/api/e2e', { signal, method:'POST', headers:{ 'content-type':'application/json', 'x-agentseye':'1' }, body:JSON.stringify({ nonce, box }) });
   const outer = await res.json().catch(() => null);
   if (res.status === 401) { forgetKey(); throw new ApiError('Wrong password.', 'locked', 401); }
   if (!res.ok) return { status:res.status, data:outer };
@@ -132,10 +132,10 @@ async function attempt(fn, ok) {
 
 // ---------- Loading and error screens ----------
 const skeleton = (rows = 4, kind = 'row') => `<div class="skeleton" aria-busy="true" aria-label="Loading">${Array.from({ length:rows }, () => `<div class="sk ${kind}"></div>`).join('')}</div>`;
-const skeletonHome = () => `<div class="top"><h1>Lookout</h1></div>${skeleton(1, 'block')}<div class="section"><div class="sk line"></div></div><div class="live">${skeleton(4, 'card').replace(/^<div class="skeleton"[^>]*>|<\/div>$/g, '')}</div>${skeleton(3)}`;
+const skeletonHome = () => `<div class="top"><h1>AgentsEye</h1></div>${skeleton(1, 'block')}<div class="section"><div class="sk line"></div></div><div class="live">${skeleton(4, 'card').replace(/^<div class="skeleton"[^>]*>|<\/div>$/g, '')}</div>${skeleton(3)}`;
 function errorPanel(e, retry) {
   const icon = { offline:'📡', timeout:'⏳', server:'⚠️' }[e?.kind] || '⚠️';
-  const hint = { offline:'Lookout will keep trying. Check that your Mac is awake and online.', timeout:'It may be busy. Try again in a moment.' }[e?.kind] || '';
+  const hint = { offline:'AgentsEye will keep trying. Check that your Mac is awake and online.', timeout:'It may be busy. Try again in a moment.' }[e?.kind] || '';
   return `<div class="state-panel"><div class="big">${icon}</div><b>${esc(e?.message || 'Something went wrong.')}</b>${hint ? `<div class="small muted">${hint}</div>` : ''}<button class="primary" data-retry>Try again</button></div>`;
 }
 // Runs a screen's first load: skeleton until data arrives, a retryable error panel if it fails.
@@ -180,7 +180,7 @@ async function gate() {
   if (relay.on && relay.info.unavailable) {
     $('#app').hidden = true;
     g.hidden = false;
-    g.innerHTML = '<div class="box"><img src="/icon.svg" alt=""><h1>Almost there</h1><p>Sign in to Lookout on your Mac once to turn on encryption for the relay, then reload this page.</p></div>';
+    g.innerHTML = '<div class="box"><img src="/icon.svg" alt=""><h1>Almost there</h1><p>Sign in to AgentsEye on your Mac once to turn on encryption for the relay, then reload this page.</p></div>';
     return;
   }
   if (relay.on && !(await relayKey())) return unlockForm(g);
@@ -191,7 +191,7 @@ async function gate() {
     // Signed-in phones keep their screen and just show the reconnecting pill; only a cold start lands here.
     if (!$('#app').hidden) { connection(false); gateTimer = setTimeout(gate, 3000); return; }
     g.hidden = false;
-    g.innerHTML = `<div class="box"><img src="/icon.svg" alt=""><h1>Can't reach your Mac</h1><p>Make sure it's awake and connected to the internet. If you use the phone link, Lookout may be restarting its connection.</p><p class="small muted"><span class="spin"></span> Trying again…</p><button class="primary" id="retry-gate">Try now</button></div>`;
+    g.innerHTML = `<div class="box"><img src="/icon.svg" alt=""><h1>Can't reach your Mac</h1><p>Make sure it's awake and connected to the internet. If you use the phone link, AgentsEye may be restarting its connection.</p><p class="small muted"><span class="spin"></span> Trying again…</p><button class="primary" id="retry-gate">Try now</button></div>`;
     $('#retry-gate').onclick = gate;
     gateTimer = setTimeout(gate, 4000);
     return;
@@ -201,7 +201,7 @@ async function gate() {
   $('#app').hidden = true;
   g.hidden = false;
   if (state.authed && !state.approved) {
-    g.innerHTML = `<div class="box"><img src="/icon.svg" alt=""><h1>Waiting for your Mac</h1><p>Approve <b>${esc(state.device?.name || 'this device')}</b> on your Mac: open Lookout there and tap <b>Approve</b>.</p><p class="small muted"><span class="dot amber"></span> Checking…</p><button class="ghost" id="cancel">Cancel</button></div>`;
+    g.innerHTML = `<div class="box"><img src="/icon.svg" alt=""><h1>Waiting for your Mac</h1><p>Approve <b>${esc(state.device?.name || 'this device')}</b> on your Mac: open AgentsEye there and tap <b>Approve</b>.</p><p class="small muted"><span class="dot amber"></span> Checking…</p><button class="ghost" id="cancel">Cancel</button></div>`;
     $('#cancel').onclick = async () => { await api('/api/auth/logout', {}); gate(); };
     gateTimer = setTimeout(gate, 3000);
     return;
@@ -209,10 +209,10 @@ async function gate() {
   if (relay.on) return unlockForm(g);
   const setup = !state.setup;
   if (setup && !state.local) {
-    g.innerHTML = '<div class="box"><img src="/icon.svg" alt=""><h1>Lookout</h1><p>Open Lookout on your Mac first and choose a password.</p></div>';
+    g.innerHTML = '<div class="box"><img src="/icon.svg" alt=""><h1>AgentsEye</h1><p>Open AgentsEye on your Mac first and choose a password.</p></div>';
     return;
   }
-  g.innerHTML = `<form class="box" id="signin"><img src="/icon.svg" alt=""><h1>Lookout</h1>
+  g.innerHTML = `<form class="box" id="signin"><img src="/icon.svg" alt=""><h1>AgentsEye</h1>
     <p>${setup ? 'Choose a password. You will use it to sign in from your phone.' : pairCode() ? 'Paired with your Mac. Enter your password.' : 'Your Mac and its coding agents, in your pocket.'}</p>
     <input id="pw" type="password" placeholder="Password" autocomplete="${setup ? 'new-password' : 'current-password'}" minlength="8" required>
     <button class="primary" type="submit">${setup ? 'Set password' : 'Sign in'}</button><div class="error" id="err"></div></form>`;
@@ -234,8 +234,8 @@ async function gate() {
 function unlockForm(g, error = '') {
   $('#app').hidden = true;
   g.hidden = false;
-  g.innerHTML = `<form class="box" id="unlock"><img src="/icon.svg" alt=""><h1>Lookout</h1>
-    <p>${pairCode() ? 'Paired with your Mac. Enter your Lookout password.' : 'Enter your Lookout password.'}</p>
+  g.innerHTML = `<form class="box" id="unlock"><img src="/icon.svg" alt=""><h1>AgentsEye</h1>
+    <p>${pairCode() ? 'Paired with your Mac. Enter your AgentsEye password.' : 'Enter your AgentsEye password.'}</p>
     <p class="small muted">🔒 Encrypted from this phone to your Mac. The relay in between can't read anything.</p>
     <input id="pw" type="password" placeholder="Password" autocomplete="current-password" minlength="8" required>
     <button class="primary" type="submit">Unlock</button><div class="error" id="err">${esc(error)}</div></form>`;
@@ -293,14 +293,26 @@ document.addEventListener('click', e => {
 let me = { local:false };
 let timers = [];
 const busyTyping = () => document.activeElement?.matches('textarea, input:not([type=search])') && document.activeElement.value;
-const every = (ms, fn) => { timers.push(setInterval(() => { if (!document.hidden && !busyTyping() && $('#sheet').hidden) fn(); }, ms)); };
-function stop() { timers.forEach(clearInterval); timers = []; }
+// Refresh loops slow down when they can: twice as slow through a relay (each call costs a relay request), and
+// three times slower again once nobody has touched the screen for a minute. Any tap brings them back to speed.
+let lastTouch = Date.now();
+['pointerdown', 'keydown', 'scroll', 'visibilitychange'].forEach(e => addEventListener(e, () => { lastTouch = Date.now(); }, { passive:true, capture:true }));
+const every = (ms, fn) => {
+  const handle = {};
+  const tick = () => {
+    if (!document.hidden && !busyTyping() && $('#sheet').hidden) fn();
+    handle.id = setTimeout(tick, ms * (relay.on ? 2 : 1) * (Date.now() - lastTouch > 60000 ? 3 : 1));
+  };
+  handle.id = setTimeout(tick, ms * (relay.on ? 2 : 1));
+  timers.push(handle);
+};
+function stop() { timers.forEach(h => clearTimeout(h.id)); timers = []; }
 
 function start(state) {
   me = state;
   $('#gate').hidden = true;
   $('#app').hidden = false;
-  // Remember that this device runs Lookout from its Home Screen, for the start guide.
+  // Remember that this device runs AgentsEye from its Home Screen, for the start guide.
   if (!state.local) api('/api/devices/me', { standalone:standalone() }).catch(() => {});
   route();
 }
@@ -314,7 +326,7 @@ const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const isPhone = /iPhone|iPad|iPod|Android/.test(navigator.userAgent);
 let installPrompt = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
-window.addEventListener('appinstalled', () => { installPrompt = null; toast('Lookout is on your Home Screen'); });
+window.addEventListener('appinstalled', () => { installPrompt = null; toast('AgentsEye is on your Home Screen'); });
 
 function installSheet() {
   if (installPrompt) {
@@ -323,9 +335,9 @@ function installSheet() {
     return;
   }
   const safari = isIOS && !/CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
-  sheet(`<h3>Add Lookout to your Home Screen</h3>
+  sheet(`<h3>Add AgentsEye to your Home Screen</h3>
     ${isIOS && !safari ? '<p class="small muted">On iPhone this only works from Safari. Copy this page\'s address and open it in Safari first.</p><button class="primary" id="copy-url">Copy address</button>' : isIOS ? `
-    <ol class="steps"><li>Tap the <b>Share</b> button <span class="kbd">⬆︎</span> at the bottom of Safari.</li><li>Scroll down and tap <b>Add to Home Screen</b>.</li><li>Tap <b>Add</b>, then open Lookout from your Home Screen.</li></ol>
+    <ol class="steps"><li>Tap the <b>Share</b> button <span class="kbd">⬆︎</span> at the bottom of Safari.</li><li>Scroll down and tap <b>Add to Home Screen</b>.</li><li>Tap <b>Add</b>, then open AgentsEye from your Home Screen.</li></ol>
     <p class="small muted">It opens full screen like an app, and it is the only way iPhone allows notifications.</p>` : `
     <ol class="steps"><li>Open your browser's <b>⋮</b> menu.</li><li>Tap <b>Install app</b> or <b>Add to Home screen</b>.</li></ol>`}
     <button class="ghost" data-close>Done</button>`, card => {
@@ -341,24 +353,24 @@ function guideSteps(st) {
   const onMac = me.local;
   return [
     { id:'link', done:st.phoneLink, title:'Turn on phone access',
-      why:'Gives Lookout a secure link your phone can open from anywhere. The Lookout relay needs nothing installed (good for company Macs) and is encrypted end to end; Tailscale and Cloudflare are the alternatives.',
+      why:'Gives AgentsEye a secure link your phone can open from anywhere. The AgentsEye relay needs nothing installed (good for company Macs) and is encrypted end to end; Tailscale and Cloudflare are the alternatives.',
       action:onMac ? '<a href="#/settings"><button class="small primary">Open Settings</button></a>' : '' , macOnly:true },
     { id:'signin', done:st.phoneSignedIn, title:'Sign in on your phone',
       why:'Scan the QR code on your Mac with your phone camera, then enter your password. Scanning skips the approval step.',
       action:onMac ? (st.phoneLink ? '<img class="guide-qr" src="/api/pair/qr?ts=guide" alt="QR code">' : '<span class="small muted">Turn on phone access first</span>') : '', macOnly:true },
     { id:'home', done:st.homeScreen, title:'Add it to your Home Screen',
-      why:'Lookout then opens full screen like an app. On iPhone this is also required for notifications.',
+      why:'AgentsEye then opens full screen like an app. On iPhone this is also required for notifications.',
       action:isPhone && !standalone() ? '<button class="small primary" data-install>Show me how</button>' : '<span class="small muted">Do this on your phone</span>' },
     { id:'notify', done:st.notifications, title:'Turn on notifications',
       why:'Get a ping when an agent needs your OK, finishes, or a usage limit runs low.',
-      action:canPush() ? '<button class="small primary" data-push>Turn on</button>' : `<span class="small muted">${isIOS && !standalone() ? 'Open Lookout from your Home Screen first' : 'Do this on your phone'}</span>` },
+      action:canPush() ? '<button class="small primary" data-push>Turn on</button>' : `<span class="small muted">${isIOS && !standalone() ? 'Open AgentsEye from your Home Screen first' : 'Do this on your phone'}</span>` },
     { id:'approvals', done:st.approvals, title:"Answer Claude's permission prompts",
       why:'Claude asks before running commands or editing files. With this on, those questions come to your phone with Allow and Deny.',
       action:onMac ? '<button class="small primary" data-hook>Turn on</button>' : '', macOnly:true },
     { id:'awake', done:st.keepAwake, title:'Keep your Mac awake',
-      why:'Agents stop when the Mac sleeps. Leave the lid open and lock the screen; Lookout keeps it awake while plugged in.',
+      why:'Agents stop when the Mac sleeps. Leave the lid open and lock the screen; AgentsEye keeps it awake while plugged in.',
       action:'<button class="small primary" data-awake>Turn on</button>' },
-    { id:'login', done:st.startAtLogin, title:'Start Lookout at login',
+    { id:'login', done:st.startAtLogin, title:'Start AgentsEye at login',
       why:'So it is always there after a restart, without a Terminal window.',
       action:onMac ? '<button class="small primary" data-login>Turn on</button>' : '', macOnly:true },
   ];
@@ -382,7 +394,7 @@ async function guideView() {
     const steps = guideSteps(st);
     const done = steps.filter(x => x.done).length;
     view.innerHTML = `<div class="top"><button class="back" onclick="history.back()" aria-label="Back">‹</button><h1>Start guide</h1></div>
-      <p class="muted" style="margin-top:-8px">${done === steps.length ? 'All set. Lookout is ready to use from your phone.' : `${done} of ${steps.length} done. Steps tick themselves off as you go.`}</p>
+      <p class="muted" style="margin-top:-8px">${done === steps.length ? 'All set. AgentsEye is ready to use from your phone.' : `${done} of ${steps.length} done. Steps tick themselves off as you go.`}</p>
       <ol class="guide">${steps.map((x, i) => `<li class="${x.done ? 'done' : ''}"><span class="num">${x.done ? '✓' : i + 1}</span><div class="grow"><b>${esc(x.title)}</b><div class="small muted">${x.why}</div>
         ${x.done ? '' : `<div class="guide-act">${x.macOnly && !me.local ? '<span class="small muted">Do this on your Mac</span>' : x.action}</div>`}</div></li>`).join('')}</ol>
       ${done < steps.length ? '<button class="ghost" id="hide-guide" style="width:100%">Hide from Home</button>' : ''}`;
@@ -392,7 +404,7 @@ async function guideView() {
     view.querySelector('[data-awake]')?.addEventListener('click', () => attempt(async () => { await api('/api/power/keep-awake', { mode:'plugged' }); render(); }, 'Keeping your Mac awake while plugged in'));
     view.querySelector('[data-login]')?.addEventListener('click', () => attempt(async () => {
       await api('/api/service/install', {});
-      toast('Lookout is restarting in the background…');
+      toast('AgentsEye is restarting in the background…');
       setTimeout(() => location.reload(), 8000);
     }));
     $('#hide-guide')?.addEventListener('click', () => { localStorage.setItem('guide-hidden', '1'); location.hash = '#/'; });
@@ -421,7 +433,7 @@ async function pollBadges() {
   $('#pip-home').textContent = b.needsYou || '';
   $('#pip-system').textContent = b.updates || '';
   $('#pip-settings').textContent = b.devicesWaiting || '';
-  document.title = b.needsYou ? `(${b.needsYou}) Lookout` : 'Lookout';
+  document.title = b.needsYou ? `(${b.needsYou}) AgentsEye` : 'AgentsEye';
 }
 
 // ---------- Home ----------
@@ -471,11 +483,11 @@ function openWhenReady(started, name) {
 // ---------- Relay settings ----------
 function relayRow(r) {
   const state = { on:`On · ${esc(r.link)}`, connecting:'Connecting to the relay…', error:esc(r.error || 'The relay refused this Mac.'), off:'Works on company Macs: nothing to install, encrypted end to end.' }[r.status] || '';
-  return `<div class="item" style="flex-wrap:wrap"><div class="grow"><b>Lookout relay</b> <span class="chip green">Recommended</span><div class="s">${state}</div></div>
+  return `<div class="item" style="flex-wrap:wrap"><div class="grow"><b>AgentsEye relay</b> <span class="chip green">Recommended</span><div class="s">${state}</div></div>
     ${me.local ? `<label class="switch"><input type="checkbox" id="relay-on" ${r.enabled ? 'checked' : ''}><i></i></label>` : ''}
     ${me.local ? `<div style="flex-basis:100%;display:grid;gap:8px;margin-top:10px">
-      <input id="relay-url" placeholder="Relay address, e.g. https://lookout-relay.you.workers.dev" value="${esc(r.url)}" autocapitalize="off" autocorrect="off" inputmode="url">
-      ${r.keyReady ? '' : '<input id="relay-pw" type="password" placeholder="Your Lookout password (once, to set up encryption)" autocomplete="current-password">'}
+      <input id="relay-url" placeholder="Relay address, e.g. https://agentseye-relay.you.workers.dev" value="${esc(r.url)}" autocapitalize="off" autocorrect="off" inputmode="url">
+      ${r.keyReady ? '' : '<input id="relay-pw" type="password" placeholder="Your AgentsEye password (once, to set up encryption)" autocomplete="current-password">'}
       ${r.enabled ? '' : '<div class="small muted">Deploy your own relay for free on Cloudflare (see relay/README.md), or use one your team runs.</div>'}</div>` : ''}</div>`;
 }
 function bindRelayRow(root, r, after) {
@@ -546,8 +558,8 @@ async function homeView() {
     const disk = st.disk ? pct(st.disk.used, st.disk.total) : 0;
     const cpu = Math.min(100, Math.round(st.load[0] / st.cpus * 100));
     const html = `
-      <div class="top"><h1>Lookout</h1><span class="mac"><span class="dot green"></span>${esc(st.host.replace(/\.local$/, ''))}</span></div>
-      ${isPhone && !standalone() && !localStorage.getItem('install-hidden') ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Get the Lookout app</b><div class="small muted">Open it from your Home Screen, full screen, with notifications.</div></div><button class="small primary" id="install">Add</button><button class="ghost small" id="install-x" aria-label="Dismiss">✕</button></div>' : ''}
+      <div class="top"><h1>AgentsEye</h1><span class="mac"><span class="dot green"></span>${esc(st.host.replace(/\.local$/, ''))}</span></div>
+      ${isPhone && !standalone() && !localStorage.getItem('install-hidden') ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Get the AgentsEye app</b><div class="small muted">Open it from your Home Screen, full screen, with notifications.</div></div><button class="small primary" id="install">Add</button><button class="ghost small" id="install-x" aria-label="Dismiss">✕</button></div>' : ''}
       ${guideCard()}
       ${limitsCard(d.limits)}
       ${d.devicesWaiting.map(dev => `<div class="banner"><div class="grow"><b>${esc(dev.name)}</b> wants to sign in<div class="small muted">${ago(dev.createdAt)}${me.local ? '' : ' · approve it on the Mac'}</div></div>${me.local ? `<button class="good small" data-approve="${dev.id}">Approve</button><button class="ghost small" data-reject="${dev.id}">✕</button>` : ''}</div>`).join('')}
@@ -964,7 +976,7 @@ async function privacy(box) {
   const groups = new Map();
   for (const r of p.rows) { if (!groups.has(r.label)) groups.set(r.label, []); groups.get(r.label).push(r); }
   box.innerHTML = `<p class="small muted" style="margin:14px 2px">Which apps can use your camera, microphone, screen and files. macOS only lets you grant access in System Settings; you can revoke it from here.</p>
-    ${p.needsFullDiskAccess ? `<div class="banner"><div class="grow small">macOS hides this list unless Lookout's <code>node</code> has <b>Full Disk Access</b>. Add <code>${esc(p.node)}</code> in System Settings, then restart Lookout.</div>${me.local ? '<button class="small primary" data-pane="kTCCServiceSystemPolicyAllFiles">Open</button>' : ''}</div>` : ''}
+    ${p.needsFullDiskAccess ? `<div class="banner"><div class="grow small">macOS hides this list unless AgentsEye's <code>node</code> has <b>Full Disk Access</b>. Add <code>${esc(p.node)}</code> in System Settings, then restart AgentsEye.</div>${me.local ? '<button class="small primary" data-pane="kTCCServiceSystemPolicyAllFiles">Open</button>' : ''}</div>` : ''}
     ${[...groups].sort().map(([label, rows]) => `<div class="section"><h2>${esc(label)}<span class="count">${rows.length}</span></h2>${me.local ? `<button class="small ghost" data-pane="${esc(rows[0].service)}">Settings ›</button>` : ''}</div><div class="list">${rows.map(r => `
       <div class="row"><div class="grow"><div class="t">${esc(r.client.split(/[./]/).pop())}</div><div class="s">${esc(r.client)}</div></div><span class="chip ${r.status === 'allowed' ? 'green' : r.status === 'denied' ? 'red' : 'amber'}">${esc(r.status)}</span>${r.revocable && r.status !== 'denied' ? `<button class="small bad" data-revoke="${esc(r.service)}" data-client="${esc(r.client)}">Revoke</button>` : ''}</div>`).join('')}</div>`).join('')}`;
   box.querySelectorAll('[data-pane]').forEach(b => b.onclick = () => attempt(() => api('/api/privacy/open', { service:b.dataset.pane })));
@@ -982,16 +994,16 @@ async function settingsView() {
     const t = s.tunnel;
     const pushOn = await pushState();
     const html = `<div class="top"><h1>Settings</h1><a href="#/guide"><button class="small">Start guide</button></a></div>
-      ${isPhone && !standalone() ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Add Lookout to your Home Screen</b><div class="small muted">Opens full screen, needed for notifications on iPhone.</div></div><button class="small primary" id="install-s">How</button></div>' : ''}
+      ${isPhone && !standalone() ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Add AgentsEye to your Home Screen</b><div class="small muted">Opens full screen, needed for notifications on iPhone.</div></div><button class="small primary" id="install-s">How</button></div>' : ''}
       <div class="section"><h2>Phone access</h2></div>
       <div class="group">
         ${relayRow(s.relay)}
-        <div class="item"><div class="grow"><b>Private link with Tailscale</b><div class="s">${{ missing:'A free app that links your own devices. The address never changes and nobody else can reach it.', 'signed-out':'Installed. Open Tailscale and sign in, on this Mac and on your phone.', stopped:'Tailscale is off. Open it and connect.', running:s.tailscale.serving ? `On · ${esc(s.tailscale.url)}` : 'Connected. Turn on to serve Lookout to your devices.' }[s.tailscale.state] || 'Unavailable'}</div></div>
+        <div class="item"><div class="grow"><b>Private link with Tailscale</b><div class="s">${{ missing:'A free app that links your own devices. The address never changes and nobody else can reach it.', 'signed-out':'Installed. Open Tailscale and sign in, on this Mac and on your phone.', stopped:'Tailscale is off. Open it and connect.', running:s.tailscale.serving ? `On · ${esc(s.tailscale.url)}` : 'Connected. Turn on to serve AgentsEye to your devices.' }[s.tailscale.state] || 'Unavailable'}</div></div>
           ${me.local ? (s.tailscale.state === 'running' ? `<label class="switch"><input type="checkbox" id="ts" ${s.tailscale.serving ? 'checked' : ''}><i></i></label>` : `<button class="small" id="ts-open">${s.tailscale.state === 'missing' ? 'Get it' : 'Open'}</button>`) : ''}</div>
-        <div class="item"><div class="grow"><b>Public link with Cloudflare</b><div class="s">${{ on:'On · private https link through Cloudflare', missing:'Needs cloudflared (free, installs with Homebrew)', off:'Off · only this Mac can open Lookout', starting:'Starting…', restarting:'Reconnecting…' }[t.status] || esc(t.status)}</div></div>
+        <div class="item"><div class="grow"><b>Public link with Cloudflare</b><div class="s">${{ on:'On · private https link through Cloudflare', missing:'Needs cloudflared (free, installs with Homebrew)', off:'Off · only this Mac can open AgentsEye', starting:'Starting…', restarting:'Reconnecting…' }[t.status] || esc(t.status)}</div></div>
           ${me.local ? (t.status === 'missing' ? `<button class="small primary" id="install-cf" ${s.installingCloudflared ? 'disabled' : ''}>${s.installingCloudflared ? 'Installing…' : 'Install'}</button>` : `<label class="switch"><input type="checkbox" id="tunnel" ${t.enabled ? 'checked' : ''}><i></i></label>`) : ''}</div>
-        ${s.phoneUrl && me.local ? `<div class="qr"><img src="/api/pair/qr?ts=${s.pairingAt}" alt="QR code to open Lookout on your phone"><b>Scan with your phone's camera</b><div class="small muted" style="text-align:center">Then sign in with your password. Scanning skips the approval step; the code works once and expires in 10 minutes.</div><div class="url mono muted">${esc(s.phoneUrl)}</div><button class="small" id="copy">Copy link</button></div>
-          <div class="item"><div class="grow small muted">On iPhone: in Safari tap Share → <b>Add to Home Screen</b>, open Lookout from there, then turn on notifications below.</div></div>` : ''}
+        ${s.phoneUrl && me.local ? `<div class="qr"><img src="/api/pair/qr?ts=${s.pairingAt}" alt="QR code to open AgentsEye on your phone"><b>Scan with your phone's camera</b><div class="small muted" style="text-align:center">Then sign in with your password. Scanning skips the approval step; the code works once and expires in 10 minutes.</div><div class="url mono muted">${esc(s.phoneUrl)}</div><button class="small" id="copy">Copy link</button></div>
+          <div class="item"><div class="grow small muted">On iPhone: in Safari tap Share → <b>Add to Home Screen</b>, open AgentsEye from there, then turn on notifications below.</div></div>` : ''}
         ${!me.local ? `<div class="item"><div class="grow small muted">Connected through ${esc(location.host)}</div></div>` : ''}
         ${t.error && t.status !== 'missing' ? `<div class="item small" style="color:var(--red)">${esc(t.error)}</div>` : ''}
       </div>
@@ -1009,7 +1021,7 @@ async function settingsView() {
         ${pushOn ? '<div class="item"><button class="small" id="test-push">Send a test notification</button></div>' : ''}</div>
       <div class="section"><h2>Approvals</h2></div>
       <div class="group">
-        <div class="item"><div class="grow"><b>Answer Claude's permission prompts here</b><div class="s">${s.hook.installed ? 'New Claude sessions send their prompts to Lookout.' : 'Adds a hook to ~/.claude/settings.json (backed up first). Restart Claude sessions afterwards.'}</div></div>
+        <div class="item"><div class="grow"><b>Answer Claude's permission prompts here</b><div class="s">${s.hook.installed ? 'New Claude sessions send their prompts to AgentsEye.' : 'Adds a hook to ~/.claude/settings.json (backed up first). Restart Claude sessions afterwards.'}</div></div>
           ${s.hook.installed ? `<label class="switch"><input type="checkbox" id="hold" ${s.approvals.hold ? 'checked' : ''}><i></i></label>` : me.local ? '<button class="small primary" id="hook">Install</button>' : '<span class="small muted">Set up on the Mac</span>'}</div>
         ${s.hook.installed ? `<div class="item"><div class="grow small">If nobody answers, Claude asks in its own window after</div><select id="wait" style="width:auto">${[60, 120, 300, 600].map(n => `<option value="${n}" ${s.approvals.waitSeconds === n ? 'selected' : ''}>${n / 60} min</option>`).join('')}</select></div>` : ''}
       </div>

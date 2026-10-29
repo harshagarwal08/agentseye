@@ -1,5 +1,5 @@
 // End-to-end encryption between your phone and your Mac, for when traffic goes through a relay.
-// Both sides derive the same AES key from your Lookout password (PBKDF2, salted per Mac), so the relay and any
+// Both sides derive the same AES key from your AgentsEye password (PBKDF2, salted per Mac), so the relay and any
 // company proxy in between only ever see ciphertext. Runs unchanged in browsers and in Node (WebCrypto).
 export const ITERATIONS = 600000;
 const enc = new TextEncoder();
@@ -37,5 +37,5 @@ export async function open(key, box, aad) {
   return JSON.parse(dec.decode(pt));
 }
 
-export const requestAad = nonce => `lookout-e2e-v1|req|${nonce}`;
-export const responseAad = nonce => `lookout-e2e-v1|res|${nonce}`;
+export const requestAad = nonce => `agentseye-e2e-v1|req|${nonce}`;
+export const responseAad = nonce => `agentseye-e2e-v1|res|${nonce}`;

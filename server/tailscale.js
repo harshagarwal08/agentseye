@@ -4,7 +4,7 @@ import { PORT } from './paths.js';
 
 // Tailscale gives the Mac a private https address (https://<mac>.<tailnet>.ts.net) that never changes and is
 // only reachable from your own devices signed in to the same Tailscale account. `tailscale serve` handles TLS
-// and forwards to Lookout on loopback, so Lookout itself never listens on the network.
+// and forwards to AgentsEye on loopback, so AgentsEye itself never listens on the network.
 const candidates = ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', '/opt/homebrew/bin/tailscale', '/usr/local/bin/tailscale'];
 let host = '';
 export const remoteHost = () => host;

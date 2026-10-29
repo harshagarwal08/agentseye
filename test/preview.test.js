@@ -6,10 +6,10 @@ import path from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
 
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lookout-preview-'));
-process.env.LOOKOUT_HOME = path.join(home, '.lookout');
-process.env.LOOKOUT_PORT = '4497';
-process.env.LOOKOUT_PREVIEW_PORT = '4498';
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agentseye-preview-'));
+process.env.AGENTSEYE_HOME = path.join(home, '.agentseye');
+process.env.AGENTSEYE_PORT = '4497';
+process.env.AGENTSEYE_PREVIEW_PORT = '4498';
 const preview = await import('../server/preview.js');
 const { parseStatus } = await import('../server/tailscale.js');
 
@@ -56,7 +56,7 @@ test('websockets for hot reload pass through after the cookie check', async () =
   assert.ok(denied);
 });
 
-test('dev server candidates skip Lookout and system programs', () => {
+test('dev server candidates skip AgentsEye and system programs', () => {
   const ports = [{ protocol:'TCP', port:5173, command:'node', pid:1 }, { protocol:'TCP', port:4497, command:'node', pid:2 }, { protocol:'TCP', port:5000, command:'ControlCe', pid:3 }, { protocol:'TCP', port:8000, command:'Python', pid:4 }, { protocol:'UDP', port:9000, command:'node', pid:5 }];
   assert.deepEqual(preview.candidates(ports).map(p => p.port), [5173, 8000]);
 });

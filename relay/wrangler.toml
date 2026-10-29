@@ -1,4 +1,4 @@
-name = "lookout-relay"
+name = "agentseye"
 main = "worker.js"
 compatibility_date = "2026-10-01"
 
@@ -9,3 +9,7 @@ class_name = "MacRoom"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["MacRoom"]
+
+# The GitHub repository install.sh downloads AgentsEye from (owner/name).
+[vars]
+REPO = "your-github-user/agentseye"
