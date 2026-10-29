@@ -50,16 +50,6 @@
       ]
     },
     {
-      "name": "This Mac",
-      "url": "/#/system",
-      "icons": [
-        {
-          "src": "/icon-192.png",
-          "sizes": "192x192"
-        }
-      ]
-    },
-    {
       "name": "Lock my Mac",
       "url": "/#/lock",
       "icons": [

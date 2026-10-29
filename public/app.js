@@ -366,8 +366,8 @@ function guideSteps(st) {
     { id:'notify', done:st.notifications, title:'Turn on notifications',
       why:'Get a ping when an agent needs your OK, finishes, or a usage limit runs low.',
       action:canPush() ? '<button class="small primary" data-push>Turn on</button>' : `<span class="small muted">${isIOS && !standalone() ? 'Open AgentsEye from your Home Screen first' : 'Do this on your phone'}</span>` },
-    { id:'approvals', done:st.approvals, title:"Answer Claude's permission prompts",
-      why:'Claude asks before running commands or editing files. With this on, those questions come to your phone with Allow and Deny.',
+    { id:'approvals', done:st.approvals, title:"Answer Claude's prompts and questions",
+      why:'When Claude asks before running a command, or asks you to pick an option, it comes to your phone (Terminal and VS Code). At your desk Claude still asks in its own window.',
       action:onMac ? '<button class="small primary" data-hook>Turn on</button>' : '', macOnly:true },
     { id:'awake', done:st.keepAwake, title:'Keep your Mac awake',
       why:'Agents stop when the Mac sleeps. Leave the lid open and lock the screen; AgentsEye keeps it awake while plugged in.',
@@ -419,11 +419,11 @@ function route() {
   stop();
   closeSheet();
   const [, page, ...rest] = location.hash.split('/');
-  const tab = ['s', 't', 'i'].includes(page) ? 'home' : page || 'home';
+  const tab = ['s', 't', 'i', 'g'].includes(page) ? 'home' : page || 'home';
   document.querySelectorAll('#tabs [data-tab]').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
-  document.body.classList.toggle('in-session', ['s', 't', 'i'].includes(page));
+  document.body.classList.toggle('in-session', ['s', 't', 'i', 'g'].includes(page));
   window.scrollTo(0, 0);
-  const view = { s:() => (rest[2] === 'a' ? subagentView(rest[0], decodeURIComponent(rest[1] || ''), decodeURIComponent(rest[3] || '')) : sessionView(rest[0], decodeURIComponent(rest[1] || ''))), t:() => t3View(decodeURIComponent(rest[0] || '')), i:() => t3View(decodeURIComponent(rest[1] || ''), rest[0]), guide:guideView, new:() => { location.replace('#/'); setTimeout(newChatSheet, 600); }, lock:() => { location.replace('#/'); setTimeout(lockMac, 600); }, settings:settingsView }[page] || homeView;
+  const view = { s:() => (rest[2] === 'a' ? subagentView(rest[0], decodeURIComponent(rest[1] || ''), decodeURIComponent(rest[3] || '')) : sessionView(rest[0], decodeURIComponent(rest[1] || ''))), t:() => t3View(decodeURIComponent(rest[0] || '')), i:() => t3View(decodeURIComponent(rest[1] || ''), rest[0]), g:() => changesView(rest[0], rest[1], decodeURIComponent(rest[2] || '')), guide:guideView, new:() => { location.replace('#/'); setTimeout(newChatSheet, 600); }, lock:() => { location.replace('#/'); setTimeout(lockMac, 600); }, settings:settingsView }[page] || homeView;
   view();
   pollBadges();
   every(4000, pollBadges);
@@ -534,47 +534,68 @@ function agentRow(a) {
 
 async function homeView() {
   const view = $('#view');
-  view.innerHTML = '<div class="home"></div>';
-  const box = view.querySelector('.home');
-  let shown = '';
+  view.innerHTML = `<div class="home"><div id="home-a"></div><div class="search" id="home-search" hidden><input id="q" type="search" placeholder="Search chats" autocomplete="off" enterkeyhint="search"></div><div id="home-b"></div></div>`;
+  const head = $('#home-a');
+  const list = $('#home-b');
+  let shownA = '';
+  let shownB = '';
   let showAll = false;
+  let filter = 'all';
   let data = null;
+  const paintList = () => {
+    const d = data;
+    const term = $('#q').value.trim().toLowerCase();
+    const apps = [...new Set(d.agents.map(a => a.harness))];
+    if (!apps.includes(filter)) filter = 'all';
+    const match = a => (filter === 'all' || a.harness === filter) && (!term || [a.title, a.name, a.project, a.preview, where(a)].some(v => String(v || '').toLowerCase().includes(term)));
+    const shown = d.agents.filter(match);
+    const groups = { waiting:[], busy:[], recent:[] };
+    for (const a of shown) groups[a.status === 'waiting' ? 'waiting' : a.status === 'busy' ? 'busy' : 'recent'].push(a);
+    const recent = groups.recent.sort((x, y) => y.updatedAt - x.updatedAt);
+    const limit = showAll || term ? 60 : 8;
+    const section = (title, items) => (items.length ? `<div class="section"><h2>${title}<span class="count">${items.length}</span></h2></div><div class="agents">${items.map(agentRow).join('')}</div>` : '');
+    const html = `
+      ${apps.length > 1 ? `<div class="filters">${['all', ...apps].map(k => `<button data-filter="${k}" class="${filter === k ? 'on' : ''}">${k === 'all' ? 'All' : esc(harnessName[k] || k)}</button>`).join('')}</div>` : ''}
+      ${section('Needs you', groups.waiting)}
+      ${section('Working', groups.busy)}
+      ${recent.length ? `<div class="section"><h2>Recent</h2></div><div class="agents">${recent.slice(0, limit).map(agentRow).join('')}</div>${recent.length > 8 && !term ? `<button class="more" id="more">${showAll ? 'Show less' : `Show ${recent.length - 8} more`}</button>` : ''}` : ''}
+      ${!d.agents.length ? `<div class="empty-state"><div class="big">👀</div><b>No agents yet</b><div class="small muted">${d.t3.connected ? 'Start a chat with the + button.' : 'Start Claude Code or Codex on your Mac and it shows up here.'}</div></div>` : !shown.length ? '<div class="empty">No chats match.</div>' : ''}
+      ${!d.t3.connected && d.t3.installed ? `<div class="small muted center">T3 Code isn't running, so its chats aren't shown.</div>` : ''}
+      ${limitsCard(d.limits)}`;
+    $('#home-search').hidden = d.agents.length < 6;
+    if (html === shownB) return;
+    shownB = html;
+    list.innerHTML = html;
+    list.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; paintList(); });
+    $('#more')?.addEventListener('click', () => { showAll = !showAll; paintList(); });
+    $('#limits')?.addEventListener('click', () => attempt(async () => { await api('/api/usage?force=1'); shownB = ''; render(); }, 'Refreshed'));
+  };
   const render = async () => {
     const d = data = await api('/api/home');
-    const groups = { waiting:[], busy:[], recent:[] };
-    for (const a of d.agents) groups[a.status === 'waiting' ? 'waiting' : a.status === 'busy' ? 'busy' : 'recent'].push(a);
-    const recent = groups.recent.sort((x, y) => y.updatedAt - x.updatedAt);
-    const section = (title, list, extra = '') => (list.length ? `<div class="section"><h2>${title}<span class="count">${list.length}</span></h2>${extra}</div><div class="agents">${list.map(agentRow).join('')}</div>` : '');
     const html = `
       <div class="top"><h1>Agents</h1><span class="mac"><span class="dot green"></span>${esc(d.host)}</span></div>
       ${isPhone && !standalone() && !localStorage.getItem('install-hidden') ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Get the app</b><div class="small muted">Add to your Home Screen for full screen and notifications.</div></div><button class="small primary" id="install">Add</button><button class="ghost small" id="install-x" aria-label="Dismiss">✕</button></div>' : ''}
       ${guideCard()}
       ${d.devicesWaiting.map(dev => `<div class="banner"><div class="grow"><b>${esc(dev.name)}</b> wants to sign in<div class="small muted">${ago(dev.createdAt)}${me.local ? '' : ' · approve it on the Mac'}</div></div>${me.local ? `<button class="good small" data-approve="${dev.id}">Approve</button><button class="ghost small" data-reject="${dev.id}">✕</button>` : ''}</div>`).join('')}
-      ${d.approvals.length ? `<div class="section"><h2>Waiting on you<span class="count">${d.approvals.length}</span></h2></div><div class="list">${d.approvals.map(approvalCard).join('')}</div>` : ''}
-      ${section('Needs you', groups.waiting)}
-      ${section('Working', groups.busy)}
-      ${recent.length ? `<div class="section"><h2>Recent</h2></div><div class="agents">${recent.slice(0, showAll ? 60 : 8).map(agentRow).join('')}</div>${recent.length > 8 ? `<button class="more" id="more">${showAll ? 'Show less' : `Show ${recent.length - 8} more`}</button>` : ''}` : ''}
-      ${!d.agents.length ? `<div class="empty-state"><div class="big">👀</div><b>No agents yet</b><div class="small muted">${d.t3.connected ? 'Start a chat with the + button.' : 'Start Claude Code or Codex on your Mac and it shows up here.'}</div></div>` : ''}
-      ${!d.t3.connected && d.t3.installed ? `<div class="small muted center">T3 Code isn't running, so its chats aren't shown.</div>` : ''}
-      ${limitsCard(d.limits)}`;
-    if (html === shown) return;
+      ${d.approvals.length ? `<div class="section"><h2>Waiting on you<span class="count">${d.approvals.length}</span></h2></div><div class="list">${d.approvals.map(approvalCard).join('')}</div>` : ''}`;
+    paintList();
+    if (html === shownA) return;
     // Don't redraw under someone typing an answer or mid-way through picking several options.
-    if ([...box.querySelectorAll('[data-ask]')].some(c => c.contains(document.activeElement) || c.querySelector('[data-other]')?.value || c.querySelector('.on'))) return;
-    shown = html;
-    box.innerHTML = html;
-    bindApprovals(box, render);
-    $('#more')?.addEventListener('click', () => { showAll = !showAll; shown = ''; render(); });
-    $('#limits')?.addEventListener('click', () => attempt(async () => { await api('/api/usage?force=1'); shown = ''; render(); }, 'Refreshed'));
+    if ([...head.querySelectorAll('[data-ask]')].some(c => c.contains(document.activeElement) || c.querySelector('[data-other]')?.value || c.querySelector('.on'))) return;
+    shownA = html;
+    head.innerHTML = html;
+    bindApprovals(head, render);
     $('#install')?.addEventListener('click', installSheet);
-    $('#install-x')?.addEventListener('click', () => { localStorage.setItem('install-hidden', '1'); shown = ''; render(); });
-    box.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/approve', { id:b.dataset.approve }); render(); }, 'Device approved'));
-    box.querySelectorAll('[data-reject]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/remove', { id:b.dataset.reject }); render(); }));
+    $('#install-x')?.addEventListener('click', () => { localStorage.setItem('install-hidden', '1'); shownA = ''; render(); });
+    head.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/approve', { id:b.dataset.approve }); render(); }, 'Device approved'));
+    head.querySelectorAll('[data-reject]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/remove', { id:b.dataset.reject }); render(); }));
   };
+  $('#q').oninput = () => data && paintList();
   view.insertAdjacentHTML('beforeend', '<button class="fab" id="fab" aria-label="New chat">＋</button>');
   $('#fab').onclick = () => newChatSheet(data);
-  loadSetup().then(() => { shown = ''; return render(); }).catch(() => {});
+  loadSetup().then(() => { shownA = ''; return render(); }).catch(() => {});
   every(30000, () => loadSetup().catch(() => {}));
-  await firstLoad(box, render, skeletonHome());
+  await firstLoad(list, render, skeletonHome());
   every(4000, () => render().catch(() => {}));
 }
 
@@ -613,14 +634,128 @@ async function newChatSheet(d) {
   });
 }
 
+// ---------- Composer ----------
+// One chat box for every agent: quick replies, a photo button, and while the agent works, messages queue up
+// and go out on their own when it finishes.
+const QUICK = ['Continue', 'Yes, go ahead', 'Run the tests', 'Commit it'];
+function composer({ placeholder, disabled = false }) {
+  return `${disabled ? '' : `<div class="quick">${QUICK.map(q => `<button type="button" data-quick="${esc(q)}">${esc(q)}</button>`).join('')}</div>`}
+    <div class="attached" id="attached" hidden></div>
+    <form class="composer" id="reply-form"><button type="button" class="clip" id="attach" aria-label="Attach a photo" ${disabled ? 'disabled' : ''}>＋</button><input type="file" id="attach-file" accept="image/*" multiple hidden>
+      <textarea id="reply" rows="1" placeholder="${esc(placeholder)}" ${disabled ? 'disabled' : ''}></textarea>
+      <div class="bar"><button class="send" aria-label="Send" ${disabled ? 'disabled' : ''}>↑</button></div></form>`;
+}
+// Photos are shrunk on the phone (the relay caps message size), saved on the Mac, and handed to the agent by path,
+// which Claude Code and Codex can open.
+async function shrink(file) {
+  const url = URL.createObjectURL(file);
+  const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = () => reject(new Error('Could not read that image.')); i.src = url; });
+  const scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.naturalWidth * scale);
+  c.height = Math.round(img.naturalHeight * scale);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  URL.revokeObjectURL(url);
+  for (const q of [0.82, 0.65, 0.5, 0.35]) {
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', q));
+    if (blob.size < 420000 || q === 0.35) return blob;
+  }
+}
+const toB64 = blob => new Promise(resolve => { const r = new FileReader(); r.onload = () => resolve(String(r.result).split(',')[1]); r.readAsDataURL(blob); });
+function bindComposer(root, { keep = '', onSend, before }) {
+  const ta = root.querySelector('#reply');
+  const chips = root.querySelector('#attached');
+  const files = [];
+  ta.value = keep;
+  ta.oninput = () => grow(ta);
+  grow(ta);
+  const paint = () => {
+    chips.hidden = !files.length;
+    chips.innerHTML = files.map((f, i) => `<span class="att"><img src="${f.url}" alt="Attached photo"><button type="button" data-unattach="${i}" aria-label="Remove photo">✕</button></span>`).join('');
+    chips.querySelectorAll('[data-unattach]').forEach(b => b.onclick = () => { files.splice(Number(b.dataset.unattach), 1); paint(); });
+  };
+  root.querySelector('#attach')?.addEventListener('click', () => root.querySelector('#attach-file').click());
+  root.querySelector('#attach-file')?.addEventListener('change', e => attempt(async () => {
+    for (const f of [...e.target.files].slice(0, 4)) {
+      const blob = await shrink(f);
+      const { path } = await api('/api/upload', { type:'image/jpeg', data:await toB64(blob) });
+      files.push({ path, url:URL.createObjectURL(blob) });
+    }
+    e.target.value = '';
+    paint();
+  }));
+  root.querySelectorAll('[data-quick]').forEach(b => b.onclick = () => { ta.value = b.dataset.quick; root.querySelector('#reply-form').requestSubmit(); });
+  root.querySelector('#reply-form').onsubmit = async e => {
+    e.preventDefault();
+    let text = ta.value.trim();
+    if (!text && !files.length) return;
+    if (files.length) text = `${text}${text ? '\n\n' : ''}${files.map(f => `[Photo from my phone: ${f.path}]`).join('\n')}`;
+    if (before && !await before()) return;
+    ta.value = '';
+    grow(ta);
+    files.length = 0;
+    paint();
+    onSend(text);
+  };
+}
+const queuedHtml = list => (list || []).map(q => `<div class="msg user pending queued">${esc(q.text).replace(/\n/g, '<br>')}<div class="when">⏳ Sends when the agent finishes · <button class="linkish" data-unqueue="${q.id}">Cancel</button></div></div>`).join('');
+const bindQueued = (pane, after) => pane.querySelectorAll('[data-unqueue]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/queue/remove', { id:b.dataset.unqueue }); after(); }, 'Cancelled'));
+
+// ---------- Changes ----------
+// What the agent changed in its project: files, diffs, and committing or pushing it.
+async function changesView(kind, harness, id) {
+  const view = $('#view');
+  const back = kind === 't3' ? `#/t/${encodeURIComponent(id)}` : kind === 'ide' ? `#/i/${harness}/${encodeURIComponent(id)}` : `#/s/${harness}/${encodeURIComponent(id)}`;
+  const q = `kind=${kind}&harness=${encodeURIComponent(harness)}&id=${encodeURIComponent(id)}`;
+  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="grow"><h1>Changes</h1><div class="small muted" id="g-sub"></div></div></div></header>
+    <div class="pane" id="pane"></div><div class="foot" id="foot"></div></div>`;
+  $('#back').onclick = () => { location.hash = back; };
+  const pane = $('#pane');
+  const foot = $('#foot');
+  const diffHtml = text => text.split('\n').filter(l => !/^(diff --git|index |--- |\+\+\+ |new file mode|deleted file mode)/.test(l)).map(l => `<div class="dl ${l.startsWith('@@') ? 'hunk' : l[0] === '+' ? 'add' : l[0] === '-' ? 'del' : ''}">${esc(l) || ' '}</div>`).join('');
+  const draw = async () => {
+    const s = await api(`/api/git?${q}`);
+    if (!s.repo) { pane.innerHTML = '<div class="empty">This project isn\'t a git repository.</div>'; foot.innerHTML = ''; return; }
+    $('#g-sub').textContent = [s.branch, s.ahead ? `${s.ahead} to push` : '', s.behind ? `${s.behind} behind` : ''].filter(Boolean).join(' · ');
+    pane.innerHTML = s.files.length ? `<div class="gfiles">${s.files.map(f => `<div class="gfile"><button class="ghead" data-f="${esc(f.path)}"><span class="gs ${f.status}">${{ new:'N', added:'A', deleted:'D', renamed:'R', modified:'M' }[f.status]}</span><span class="grow mono small">${esc(f.path)}</span><span class="small nowrap"><b class="plus">+${f.add}</b> <b class="minus">−${f.del}</b></span></button><div class="gdiff" hidden></div></div>`).join('')}</div>`
+      : `<div class="empty">No uncommitted changes.${s.ahead ? ` ${s.ahead} commit${s.ahead > 1 ? 's' : ''} not pushed yet.` : ''}</div>`;
+    pane.querySelectorAll('[data-f]').forEach(b => b.onclick = async () => {
+      const box = b.nextElementSibling;
+      if (!box.hidden) { box.hidden = true; return; }
+      box.hidden = false;
+      box.innerHTML = '<div class="small muted">Loading…</div>';
+      try { box.innerHTML = diffHtml((await api(`/api/git/diff?${q}&file=${encodeURIComponent(b.dataset.f)}`)).diff) || '<div class="small muted">No text changes (binary file).</div>'; }
+      catch (e) { box.innerHTML = `<div class="small" style="color:var(--red)">${esc(e.message)}</div>`; }
+    });
+    const keep = $('#commit-msg')?.value || '';
+    foot.innerHTML = s.files.length ? `<form class="commit" id="commit-form"><input id="commit-msg" placeholder="What changed? (commit message)" autocomplete="off"><div class="row2"><button type="button" id="commit">Commit</button><button class="primary" id="commit-push">Commit and push</button></div></form>`
+      : s.ahead ? `<button class="primary" id="push">Push ${s.ahead} commit${s.ahead > 1 ? 's' : ''}${s.upstream ? ` to ${esc(s.upstream)}` : ''}</button>` : '';
+    if ($('#commit-msg')) $('#commit-msg').value = keep;
+    const commit = push => attempt(async () => {
+      const message = $('#commit-msg').value.trim();
+      if (!message) throw new Error('Write a commit message first.');
+      if (push && !await confirmSheet('Commit and push?', `All ${s.files.length} changed file${s.files.length > 1 ? 's' : ''} are committed on ${s.branch} and pushed${s.upstream ? ` to ${s.upstream}` : ' to origin'}.`, 'Commit and push')) return;
+      await api('/api/git/commit', { kind, harness, id, message, push }, { timeout:120000 });
+      $('#commit-msg').value = '';
+      await draw();
+    }, push ? 'Committed and pushed' : 'Committed');
+    $('#commit')?.addEventListener('click', () => commit(false));
+    $('#commit-form')?.addEventListener('submit', e => { e.preventDefault(); commit(true); });
+    $('#push')?.addEventListener('click', () => attempt(async () => { await api('/api/git/push', { kind, harness, id }, { timeout:120000 }); await draw(); }, 'Pushed'));
+  };
+  pane.innerHTML = skeleton(4);
+  await draw().catch(e => sessionError(pane, e, draw));
+}
+
 // ---------- T3 Code chat ----------
 // Messages go through T3, so they appear in the desktop app too. While the agent works the box is disabled;
 // when it asks a question, its options show as buttons. Cursor and VS Code chats use the same screen, read only.
 async function t3View(id, app = '') {
   const view = $('#view');
-  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar"></div><div class="grow title-btn"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></div><span id="s-chip"></span></div></header>
+  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar"></div><div class="grow title-btn"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></div><button class="icon-btn" id="changes" aria-label="Changes" hidden>±</button><span id="s-chip"></span></div></header>
     <div class="pane" id="pane"></div><div class="foot" id="foot"></div></div>`;
   $('#back').onclick = () => { location.hash = '#/'; };
+  $('#changes').onclick = () => { location.hash = app ? `#/g/ide/${app}/${encodeURIComponent(id)}` : `#/g/t3/-/${encodeURIComponent(id)}`; };
   const pane = $('#pane');
   const foot = $('#foot');
   let info = null;
@@ -631,11 +766,13 @@ async function t3View(id, app = '') {
     const st = agentState(s);
     $('#s-title').textContent = s.title;
     $('#s-sub').textContent = [s.project, s.model].filter(Boolean).join(' · ');
+    $('#changes').hidden = !s.cwd;
     $('#s-avatar').innerHTML = avatar(s.harness, { waiting:'waiting', busy:'busy' }[st] || 'open');
     $('#s-chip').innerHTML = { waiting:'<span class="chip amber">Needs you</span>', busy:'<span class="chip blue"><span class="spin"></span>Working</span>', failed:'<span class="chip red">Failed</span>' }[st] || '<span class="chip green">Ready</span>';
     const said = new Set(info.messages.filter(m => m.role === 'user').map(m => m.text.trim()));
     outbox = outbox.filter(o => o.state !== 'sent' || !said.has(o.text));
     const html = (info.messages.map(m => `<div class="msg ${m.role}">${m.role === 'assistant' ? markdown(m.text) : esc(m.text).replace(/\n/g, '<br>')}<div class="when">${ago(m.time)}</div></div>`).join('') || (outbox.length ? '' : '<div class="empty">No messages yet.</div>'))
+      + queuedHtml(info.queued)
       + outbox.map((o, i) => `<div class="msg user pending ${o.state}">${esc(o.text).replace(/\n/g, '<br>')}<div class="when">${{ sending:'<span class="spin"></span> Sending…', sent:'✓ Sent', failed:`Not sent: ${esc(o.error)} · <button class="linkish" data-resend="${i}">Retry</button>` }[o.state]}</div></div>`).join('')
       + (st === 'busy' ? `<div class="typing"><span class="spin"></span> ${esc(info.activity ? `Working · ${info.activity}` : 'Working…')}</div>` : '')
       + (s.error && st === 'failed' ? `<div class="msg system">⚠️ ${esc(s.error)}</div>` : '');
@@ -645,6 +782,7 @@ async function t3View(id, app = '') {
       lastPane = html;
       if (first || atEnd || outbox.length) pane.scrollTop = pane.scrollHeight;
       pane.querySelectorAll('[data-resend]').forEach(b => b.onclick = () => { const o = outbox.splice(Number(b.dataset.resend), 1)[0]; send(o.text); });
+      bindQueued(pane, () => draw(false));
     }
     paintFoot(st);
   };
@@ -672,11 +810,13 @@ async function t3View(id, app = '') {
       }, 'Answered');
       foot.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => answer(b.dataset.opt));
     } else {
+      // While it works, anything typed is queued and sent when it finishes.
       const busy = st === 'busy';
-      foot.innerHTML = `${busy ? '<div class="busybar"><span class="small muted">The agent is working. You can reply when it finishes.</span><button class="small bad" id="stop">Stop</button></div>' : ''}
-        <form class="composer" id="reply-form"><textarea id="reply" rows="1" placeholder="${busy ? 'Waiting for the agent…' : `Message ${harnessName[info.session.harness]}…`}" ${busy ? 'disabled' : ''}></textarea>
-        <div class="bar"><span class="grow"></span><button class="send" aria-label="Send" ${busy ? 'disabled' : ''}>↑</button></div></form>`;
+      foot.innerHTML = `${busy ? '<div class="busybar"><span class="small muted">Working. Messages you send now go out when it finishes.</span><button class="small bad" id="stop">Stop</button></div>' : ''}
+        ${composer({ placeholder:busy ? 'Queue a message for when it finishes…' : `Message ${harnessName[info.session.harness]}…` })}`;
       $('#stop')?.addEventListener('click', async () => { if (await confirmSheet('Stop the agent?', 'It stops what it is doing. You can send it a new message afterwards.', 'Stop', true)) attempt(async () => { await api('/api/t3/stop', { id }); draw(false).catch(() => {}); }, 'Stopping…'); });
+      bindComposer(foot, { keep, onSend:text => (busy ? attempt(async () => { await api('/api/queue', { kind:'t3', id, text }); lastPane = ''; await draw(false); }, 'Queued') : send(text)) });
+      return;
     }
     const ta = $('#reply');
     if (!ta) return;
@@ -744,7 +884,7 @@ function approvalCard(p) {
   if (i.command) body = `<pre>$ ${esc(i.command)}</pre>${i.description ? `<div class="small muted">${esc(i.description)}</div>` : ''}`;
   else if (i.file_path) body = `<div class="mono small">${esc(home(i.file_path))}</div>${i.content != null || i.new_string != null ? `<pre>${esc(String(i.content ?? `- ${i.old_string}\n+ ${i.new_string}`).slice(0, 3000))}</pre>` : ''}`;
   return `<div class="approval"><div class="head"><div class="avatar">${avatar('claude', 'waiting')}</div><div class="grow"><b>Claude wants to use ${esc(p.tool)}</b><div class="small muted">${esc(base(p.cwd))} · ${ago(p.createdAt)}</div></div></div>
-    ${body}<div class="actions"><button class="bad" data-deny="${p.id}">Deny</button><button class="good" data-allow="${p.id}">Allow</button></div></div>`;
+    ${body}<div class="actions"><button class="bad" data-deny="${p.id}">Deny</button><button data-always="${p.id}" title="Don't ask again for this in this project">Always</button><button class="good" data-allow="${p.id}">Allow</button></div></div>`;
 }
 function bindApprovals(root, after) {
   root.querySelectorAll('[data-ask]').forEach(card => {
@@ -774,6 +914,7 @@ function bindApprovals(root, after) {
     });
     card.querySelector('[data-send]')?.addEventListener('click', submit);
   });
+  root.querySelectorAll('[data-always]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/approvals/decide', { id:b.dataset.always, decision:'allow', always:true }); after(); }, 'Allowed. Claude won\'t ask again for this here.'));
   root.querySelectorAll('[data-allow]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/approvals/decide', { id:b.dataset.allow, decision:'allow' }); after(); }, 'Allowed'));
   root.querySelectorAll('[data-deny]').forEach(b => b.onclick = () => sheet(`<h3>Deny this request?</h3><input id="why" placeholder="Tell Claude what to do instead (optional)"><button class="bad" id="do-deny">Deny</button><button class="ghost" data-close>Cancel</button>`, card => {
     card.querySelector('#do-deny').onclick = () => { closeSheet(); attempt(async () => { await api('/api/approvals/decide', { id:b.dataset.deny, decision:'deny', message:card.querySelector('#why').value }); b.closest('[data-ask]')?.remove(); after(); }, 'Denied'); };
@@ -785,10 +926,11 @@ async function sessionView(harness, id) {
   let tab = 'chat';
   let info = null;
   const view = $('#view');
-  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar">${avatar(harness, 'open')}</div><button class="grow title-btn" id="s-name" aria-label="Rename"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></button><button class="chip-btn" id="s-chip" aria-label="Session actions"></button></div>
+  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar">${avatar(harness, 'open')}</div><button class="grow title-btn" id="s-name" aria-label="Rename"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></button><button class="icon-btn" id="changes" aria-label="Changes">±</button><button class="chip-btn" id="s-chip" aria-label="Session actions"></button></div>
     <div class="seg" id="s-tabs"><button data-t="chat" class="on">Chat</button>${harness === 'claude' ? '<button data-t="helpers">Helpers</button>' : ''}<button data-t="terminal">Terminal</button><button data-t="files">Files</button></div></header>
     <div class="pane" id="pane"></div><div class="foot" id="foot"></div></div>`;
   $('#back').onclick = () => { location.hash = '#/'; };
+  $('#changes').onclick = () => { location.hash = `#/g/local/${harness}/${encodeURIComponent(id)}`; };
   $('#s-chip').onclick = () => {
     const s = info?.session;
     if (!s) return;
@@ -835,6 +977,7 @@ async function sessionView(harness, id) {
       const said = new Set(info.messages.filter(m => m.role === 'user').map(m => m.text.trim()));
       outbox = outbox.filter(o => o.state !== 'sent' || !said.has(o.text));
       html = (info.messages.map(m => m.role === 'tool' ? `<div class="tool">▸ ${esc(m.text)}</div>` : `<div class="msg ${m.role}">${m.role === 'assistant' ? markdown(m.text) : esc(m.text).replace(/\n/g, '<br>')}${fileButtons(m.files, harness, id)}<div class="when">${ago(m.time)}</div></div>`).join('') || (outbox.length ? '' : '<div class="empty">No messages yet. Say something below.</div>'))
+        + queuedHtml(info.queued)
         + outbox.map((o, i) => `<div class="msg user pending ${o.state}">${esc(o.text).replace(/\n/g, '<br>')}<div class="when">${{ sending:'<span class="spin"></span> Sending to your Mac…', sent:'✓ Delivered · waiting for the agent', failed:`Not sent: ${esc(o.error)} · <button class="linkish" data-resend="${i}">Retry</button>` }[o.state]}</div></div>`).join('');
     } else if (tab === 'helpers') {
       html = info.helpers.length ? `<div class="list">${info.helpers.map(helperRow(harness, id)).join('')}</div>` : '<div class="empty">This session has not started any subagents.</div>';
@@ -849,6 +992,7 @@ async function sessionView(harness, id) {
       lastPane = html;
       if (tab === 'helpers' || tab === 'files') { if (first) pane.scrollTop = 0; } else if (first || atEnd || tab === 'terminal' || outbox.length) pane.scrollTop = pane.scrollHeight;
       pane.querySelectorAll('[data-resend]').forEach(b => b.onclick = () => { const o = outbox.splice(Number(b.dataset.resend), 1)[0]; send(o.text); });
+      bindQueued(pane, () => draw(false));
       $('#screen') && ($('#screen').scrollTop = $('#screen').scrollHeight);
       pane.querySelectorAll('[data-path]').forEach(el => el.onclick = () => previewFile(harness, id, el.dataset.path));
     }
@@ -871,24 +1015,17 @@ async function sessionView(harness, id) {
     }
     const keep = $('#reply')?.value || '';
     const busy = s.live && s.status === 'busy';
-    const blocked = (info.delivery === 'none' && !info.canMove) || busy;
-    const hint = busy ? 'The agent is working. You can reply when it finishes.' : { terminal:'Types into its Terminal tab on your Mac', resume:'Resumes it in a Terminal window on your Mac', none:info.deliveryNote || 'Open in another app. Reply from there.' }[info.delivery] || '';
-    foot.innerHTML = `${info.approvals.map(approvalCard).join('')}<form class="composer" id="reply-form"><textarea id="reply" rows="1" placeholder="${blocked ? (busy ? 'Waiting for the agent…' : 'Read only') : `Message ${harnessName[harness] || 'agent'}…`}" ${blocked ? 'disabled' : ''}></textarea>
-      <div class="bar"><span class="small muted grow">${esc(hint)}</span><button class="send" aria-label="Send" ${blocked ? 'disabled' : ''}>↑</button></div></form>`;
+    const blocked = info.delivery === 'none' && !info.canMove;
+    const note = busy ? 'Working. Messages you send now go out when it finishes.' : info.delivery === 'none' ? info.deliveryNote : '';
+    foot.innerHTML = `${info.approvals.map(approvalCard).join('')}${note ? `<div class="busybar"><span class="small muted">${esc(note)}</span></div>` : ''}
+      ${composer({ placeholder:blocked ? 'Read only' : busy ? 'Queue a message for when it finishes…' : `Message ${harnessName[harness] || 'agent'}…`, disabled:blocked })}`;
     bindApprovals(foot, () => { foot.dataset.key = ''; draw(false); });
-    const ta = $('#reply');
-    ta.value = keep;
-    ta.oninput = () => grow(ta);
-    grow(ta);
-    $('#reply-form').onsubmit = async e => {
-      e.preventDefault();
-      const text = ta.value.trim();
-      if (!text) return;
-      if (info.delivery === 'none' && info.canMove && !await confirmSheet('Move this chat to Terminal?', 'The same conversation carries on in a Terminal window on your Mac, so you can keep chatting from your phone. Close it in VS Code so you don’t reply in two places.', 'Move and send')) return;
-      ta.value = '';
-      grow(ta);
-      send(text);
-    };
+    if (blocked) return;
+    bindComposer(foot, {
+      keep,
+      before:async () => busy || !(info.delivery === 'none' && info.canMove) || confirmSheet('Move this chat to Terminal?', 'The same conversation carries on in a Terminal window on your Mac, so you can keep chatting from your phone. Close it in VS Code so you don’t reply in two places.', 'Move and send'),
+      onSend:text => (busy ? attempt(async () => { await api('/api/queue', { kind:'local', harness, id, text }); await draw(false); }, 'Queued') : send(text)),
+    });
   };
   let outbox = [];
   const send = async text => {
@@ -998,11 +1135,15 @@ async function settingsView() {
       <div class="section"><h2>Notifications</h2></div>
       <div class="group"><div class="item"><div class="grow"><b>Notify this device</b><div class="s">When an agent needs your OK or finishes, and when a new device asks to sign in.</div></div>
         ${'PushManager' in window && window.isSecureContext && location.protocol === 'https:' ? `<label class="switch"><input type="checkbox" id="push" ${pushOn ? 'checked' : ''}><i></i></label>` : `<span class="small muted" style="max-width:40%;text-align:right">${/iPhone|iPad/.test(navigator.userAgent) && !navigator.standalone ? 'Add to Home Screen first' : 'Needs the https phone link'}</span>`}</div>
-        ${pushOn ? '<div class="item"><button class="small" id="test-push">Send a test notification</button></div>' : ''}</div>
+        ${pushOn ? '<div class="item"><button class="small" id="test-push">Send a test notification</button></div>' : ''}
+        <div class="item"><div class="grow"><b>Daily summary</b><div class="s">One notification in the evening: what your agents did today and what still needs you.</div></div><label class="switch"><input type="checkbox" id="summary" ${s.summary.on ? 'checked' : ''}><i></i></label></div>
+        ${s.summary.on ? `<div class="item"><div class="grow small">Send it at</div><select id="summary-time" style="width:auto">${['17:00', '18:00', '19:00', '20:00', '21:00', '22:00'].map(t => `<option ${s.summary.time === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>` : ''}</div>
       <div class="section"><h2>Approvals</h2></div>
       <div class="group">
-        <div class="item"><div class="grow"><b>Answer Claude's permission prompts here</b><div class="s">${s.hook.installed ? 'New Claude sessions send their prompts to AgentsEye.' : 'Adds a hook to ~/.claude/settings.json (backed up first). Restart Claude sessions afterwards.'}</div></div>
+        <div class="item"><div class="grow"><b>Answer Claude's prompts and questions here</b><div class="s">${s.hook.installed ? 'Claude Code sessions (Terminal and VS Code) started after this was turned on send them to AgentsEye.' : 'Adds a hook to ~/.claude/settings.json (backed up first). Restart Claude sessions afterwards.'}</div></div>
           ${s.hook.installed ? `<label class="switch"><input type="checkbox" id="hold" ${s.approvals.hold ? 'checked' : ''}><i></i></label>` : me.local ? '<button class="small primary" id="hook">Install</button>' : '<span class="small muted">Set up on the Mac</span>'}</div>
+        ${s.hook.installed && s.approvals.hold ? `<div class="item"><div class="seg" style="flex:1">${[['away', 'When I\'m away from the Mac'], ['always', 'Always']].map(([k, v]) => `<button data-when="${k}" class="${s.approvals.when === k ? 'on' : ''}">${v}</button>`).join('')}</div></div>
+          <div class="item"><div class="grow small muted">${s.approvals.when === 'away' ? 'At your desk Claude asks in its own window as usual. After 2 minutes without keyboard or mouse, prompts come to your phone.' : 'Every prompt comes here first.'}</div></div>` : ''}
         ${s.hook.installed ? `<div class="item"><div class="grow small">If nobody answers, Claude asks in its own window after</div><select id="wait" style="width:auto">${[60, 120, 300, 600].map(n => `<option value="${n}" ${s.approvals.waitSeconds === n ? 'selected' : ''}>${n / 60} min</option>`).join('')}</select></div>` : ''}
       </div>
       ${s.history.length ? `<div class="section"><h2>Recent decisions</h2></div><div class="list">${s.history.slice(0, 5).map(h => `<div class="row"><div class="grow"><div class="t mono small">${esc(summarize(h.input))}</div><div class="s">${esc(h.tool)} · ${esc(base(h.cwd))} · ${ago(h.decidedAt)}</div></div><span class="chip ${h.decision === 'allow' ? 'green' : h.decision === 'deny' ? 'red' : ''}">${h.decision === 'terminal' ? 'in app' : h.decision}</span></div>`).join('')}</div>` : ''}
@@ -1023,6 +1164,9 @@ async function settingsView() {
       shown = ''; render();
     }, e.target.checked ? 'Will keep running with the lid closed' : 'Normal sleep restored'));
     $('#lock-now')?.addEventListener('click', lockMac);
+    view.querySelectorAll('[data-when]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/approvals/settings', { when:b.dataset.when }); shown = ''; render(); }, 'Saved'));
+    $('#summary')?.addEventListener('change', e => attempt(async () => { await api('/api/summary/settings', { on:e.target.checked }); shown = ''; render(); }, 'Saved'));
+    $('#summary-time')?.addEventListener('change', e => attempt(async () => { await api('/api/summary/settings', { time:e.target.value }); }, 'Saved'));
     $('#tunnel')?.addEventListener('change', e => attempt(async () => { await api('/api/tunnel', { on:e.target.checked }); shown = ''; setTimeout(render, 800); }));
     $('#install-cf')?.addEventListener('click', () => attempt(async () => { await api('/api/tunnel/install', {}); render(); }, 'Installing cloudflared…'));
     $('#copy')?.addEventListener('click', () => navigator.clipboard.writeText(s.phoneUrl).then(() => toast('Copied')));

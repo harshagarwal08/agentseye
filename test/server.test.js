@@ -84,6 +84,8 @@ test('a pairing code skips approval once', async () => {
 });
 
 test('hook round trip: request waits for a decision from the phone', async () => {
+  // Someone may be at this Mac while tests run; send every prompt to the phone regardless.
+  await call('/api/approvals/settings', { when:'always' }, { cookie:mac });
   const hook = spawn(process.execPath, [path.resolve('hooks/permission-hook.mjs')], { env:{ ...process.env } });
   let out = '';
   hook.stdout.on('data', c => { out += c; });
@@ -123,6 +125,32 @@ test('hook falls through when holding is off, and only accepts local callers wit
   assert.equal((await call('/hook/permission', {}, { headers:{ 'x-agentseye-token':'nope' } })).status, 403);
   assert.equal((await call('/hook/permission', {}, { remote:true, headers:{ 'x-agentseye-token':auth.hookToken() } })).status, 403);
   await call('/api/approvals/settings', { hold:true }, { cookie:mac });
+});
+
+test('always allow saves a rule in the project, so Claude stops asking', async () => {
+  const project = fs.mkdtempSync(path.join(home, 'proj-'));
+  const hook = spawn(process.execPath, [path.resolve('hooks/permission-hook.mjs')], { env:{ ...process.env } });
+  hook.stdout.on('data', () => {});
+  hook.stdin.end(JSON.stringify({ session_id:'abc', cwd:project, tool_name:'Bash', tool_input:{ command:'npm test' } }));
+  let pending = [];
+  for (let i = 0; i < 60 && !pending.length; i++) { await new Promise(r => setTimeout(r, 50)); pending = (await call('/api/approvals', undefined, { cookie:mac })).body.pending; }
+  assert.equal((await call('/api/approvals/decide', { id:pending[0].id, decision:'allow', always:true }, { cookie:mac })).status, 200);
+  await new Promise(r => hook.on('close', r));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(project, '.claude', 'settings.local.json'), 'utf8')).permissions.allow, ['Bash(npm test)']);
+});
+
+test('messages typed while an agent works are queued, and can be taken back', async () => {
+  const q = await call('/api/queue', { kind:'t3', id:'thread-1', text:'then add tests' }, { cookie:mac });
+  assert.equal(q.status, 200);
+  assert.equal((await call('/api/queue', { kind:'nope', id:'x', text:'hi' }, { cookie:mac })).status, 400);
+  assert.equal((await call('/api/queue/remove', { id:q.body.id }, { cookie:mac })).status, 200);
+});
+
+test('photos from the phone are saved privately; other files are refused', async () => {
+  const ok = await call('/api/upload', { type:'image/png', data:Buffer.from('png').toString('base64') }, { cookie:mac });
+  assert.equal(ok.status, 200);
+  assert.ok(fs.existsSync(ok.body.path) && ok.body.path.includes(path.join('.agentseye', 'uploads')));
+  assert.equal((await call('/api/upload', { type:'text/x-sh', data:'ZWNobw==' }, { cookie:mac })).status, 400);
 });
 
 test('hook installer keeps other hooks and is idempotent', () => {

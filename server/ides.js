@@ -32,7 +32,8 @@ let cursorCache = { at:0, checked:0, list:[] };
 async function cursorList() {
   const at = mtime(cursorDb);
   if (!at) return [];
-  if (at === cursorCache.at || Date.now() - cursorCache.checked < 10000) return cursorCache.list;
+  // A chat stuck on a question writes nothing, so keep re-checking while any chat is working.
+  if ((at === cursorCache.at && !cursorCache.list.some(c => c.status === 'busy')) || Date.now() - cursorCache.checked < 10000) return cursorCache.list;
   cursorCache.checked = Date.now();
   const rows = await sql(`select substr(key, 14) id, json_extract(value,'$.name') name, json_extract(value,'$.status') status,
     coalesce(json_extract(value,'$.lastUpdatedAt'), json_extract(value,'$.createdAt')) updated
@@ -42,6 +43,14 @@ async function cursorList() {
     source:'ide', app:'cursor', harness:'cursor', id:r.id, title:r.name || 'Cursor chat', project:'Cursor',
     status:r.status === 'generating' ? 'busy' : 'done', updatedAt:Number(r.updated) || 0,
   }));
+  // A working chat whose last step is a tool call with no decision yet, and nothing new for a while, is almost
+  // always Cursor asking "Run this command?" and waiting for a click.
+  for (const c of list.filter(x => x.status === 'busy')) {
+    const [last] = await sql(`select json_extract(value,'$.toolFormerData.status') status, json_extract(value,'$.toolFormerData.userDecision') decision,
+      json_extract(value,'$.createdAt') at from cursorDiskKV where key >= ${quote(`bubbleId:${c.id}:`)} and key < ${quote(`bubbleId:${c.id};`)}
+      order by json_extract(value,'$.createdAt') desc limit 1`);
+    if (last?.status === 'loading' && !last.decision && Date.now() - Date.parse(last.at) > 20000) c.status = 'waiting';
+  }
   cursorCache = { at, checked:Date.now(), list };
   return list;
 }
@@ -131,7 +140,7 @@ export async function list() {
 export async function thread(app, id) {
   if (app === 'cursor') {
     const session = (await cursorList()).find(c => c.id === id) || { source:'ide', app, harness:'cursor', id, title:'Cursor chat', project:'Cursor', status:'done' };
-    return { session, messages:await cursorThread(id), readOnly:true, note:'Reply to this chat in Cursor on your Mac.' };
+    return { session, messages:await cursorThread(id), readOnly:true, note:session.status === 'waiting' ? 'Cursor is waiting for you to approve a step. Open it on your Mac.' : 'Reply to this chat in Cursor on your Mac.' };
   }
   if (app === 'vscode') {
     const found = copilotList().find(c => c.id === id);

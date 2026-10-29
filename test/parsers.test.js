@@ -107,3 +107,24 @@ test('T3 thread states: waiting beats working, queued counts as working', async 
   assert.equal(summarize({ ...base, status:'failed' }).status, 'failed');
   assert.equal(summarize({ ...base, status:'idle', providerInstanceId:'codex' }).harness, 'codex');
 });
+
+test('git status lists changes, shows a diff, and commits', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const git = await import('../server/git.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-git-'));
+  const run = (...a) => execFileSync('git', ['-C', dir, ...a]);
+  run('init', '-q'); run('config', 'user.email', 't@example.com'); run('config', 'user.name', 'T');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n'); run('add', '.'); run('commit', '-qm', 'first');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'one\ntwo\n');
+  fs.writeFileSync(path.join(dir, 'b.txt'), 'new\n');
+  const s = await git.status(dir);
+  assert.deepEqual(s.files.map(f => [f.path, f.status, f.add]).sort(), [['a.txt', 'modified', 1], ['b.txt', 'new', 2]]);
+  assert.match((await git.diff(dir, 'a.txt')).diff, /\+two/);
+  await assert.rejects(git.diff(dir, '../etc/passwd'));
+  const after = await git.commit(dir, 'from phone', false);
+  assert.equal(after.files.length, 0);
+  fs.rmSync(dir, { recursive:true, force:true });
+});

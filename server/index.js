@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
-import { PORT } from './paths.js';
+import { PORT, DATA, readJson, writeJson } from './paths.js';
 import { run } from './exec.js';
 import * as auth from './auth.js';
 import * as system from './system.js';
@@ -30,6 +30,8 @@ import { recentFiles, safePath, mime } from './files.js';
 import { rename } from './names.js';
 import { usage } from './usage.js';
 import * as ides from './ides.js';
+import * as queue from './queue.js';
+import * as git from './git.js';
 import { hookStatus, installHook, uninstallHook } from './hookinstall.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
@@ -103,6 +105,69 @@ async function sessionDelivery(session) {
   return { delivery:'none', tty, canMove, note:canMove ? `Open in ${where}. Sending moves this chat to Terminal on your Mac.` : `Open in ${where}. Reply from there.` };
 }
 
+// Sending to a Terminal session: type into its tab, or resume it (moving a VS Code chat over when asked).
+async function sendToSession(harness, id, text, move = false) {
+  const session = await agents.findSession(harness, id);
+  const { delivery, tty, note, canMove } = await sessionDelivery(session);
+  if (delivery === 'terminal') await terminal.sendText(tty, session.harness, text);
+  else if (delivery === 'resume' || (canMove && move)) await agents.resume(session.harness, session.id, session.cwd, text);
+  else throw fail(note, 409);
+  return delivery;
+}
+
+// The project folder of an agent the phone points at. The phone never names a folder itself.
+async function agentFolder(q) {
+  const kind = String(q.kind || '');
+  const id = String(q.id || '');
+  if (kind === 't3') return (await t3.thread(id)).session.cwd;
+  if (kind === 'local') return (await agents.findSession(String(q.harness), id)).cwd;
+  if (kind === 'ide') return (await ides.thread(String(q.harness), id)).session.cwd;
+  throw fail('Unknown agent.');
+}
+const query = url => Object.fromEntries(url.searchParams);
+
+// Photos from the phone are saved here and handed to the agent by path; they are cleared after a week.
+const uploads = path.join(DATA, 'uploads');
+const mimeExt = { 'image/jpeg':'jpg', 'image/png':'png', 'image/webp':'webp', 'image/gif':'gif', 'image/heic':'heic' };
+function saveUpload(b) {
+  const ext = mimeExt[b.type];
+  if (!ext) throw fail('Only images can be attached.');
+  const data = Buffer.from(String(b.data || ''), 'base64');
+  if (!data.length || data.length > 8 * 1024 * 1024) throw fail('That image is too large.');
+  fs.mkdirSync(uploads, { recursive:true, mode:0o700 });
+  const file = path.join(uploads, `${new Date().toISOString().slice(0, 10)}-${crypto.randomBytes(4).toString('hex')}.${ext}`);
+  fs.writeFileSync(file, data, { mode:0o600 });
+  return { path:file };
+}
+function cleanUploads() {
+  try { for (const n of fs.readdirSync(uploads)) { const f = path.join(uploads, n); if (Date.now() - fs.statSync(f).mtimeMs > 7 * 86400000) fs.rmSync(f); } } catch {}
+}
+
+// Free means the message can go now: T3 threads that aren't working or asking; Terminal sessions that are idle.
+async function agentFree(item) {
+  if (item.kind === 't3') return !['busy', 'waiting'].includes(t3.threads().find(t => t.id === item.agentId)?.status);
+  const s = await agents.findSession(item.harness, item.agentId);
+  return !s.live || s.harness !== 'claude' || s.status === 'idle';
+}
+const deliverQueued = item => (item.kind === 't3' ? t3.sendMessage(item.agentId, item.text) : sendToSession(item.harness, item.agentId, item.text));
+
+// A short evening roundup of the day's agents.
+const summaryFile = path.join(DATA, 'summary.json');
+const summarySettings = () => ({ on:true, time:'18:00', ...readJson(summaryFile, {}) });
+async function dailySummary() {
+  const s = summarySettings();
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  if (!s.on || s.sentOn === today || `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}` < s.time) return;
+  writeJson(summaryFile, { ...s, sentOn:today });
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const list = (await allAgents()).filter(a => a.updatedAt >= start);
+  if (!list.length) return;
+  const count = st => list.filter(a => a.status === st).length;
+  const bits = [`${list.length} chat${list.length === 1 ? '' : 's'} today`, count('waiting') && `${count('waiting')} need you`, count('busy') && `${count('busy')} still working`].filter(Boolean);
+  push.notify({ title:'📋 Today on your Mac', body:`${bits.join(' · ')}. ${list.slice(0, 3).map(a => a.title).join(', ')}`.slice(0, 200), url:'/#/', tag:'daily-summary' });
+}
+
 const routes = {
   'GET /api/badges':() => ({ needsYou:needsYou(), updates:updateCount(), devicesWaiting:pendingDevices().length }),
   'GET /api/home':async () => {
@@ -123,7 +188,7 @@ const routes = {
       return { session, subagent:sub, messages:agents.transcript(harness, id, session.cwd, { agent }) };
     }
     const { delivery, tty, note, canMove } = await sessionDelivery(session);
-    const out = { session, delivery, deliveryNote:note || '', canMove:Boolean(canMove), approvals:approvals.list().pending.filter(p => p.sessionId === id) };
+    const out = { session, delivery, deliveryNote:note || '', canMove:Boolean(canMove), queued:queue.forAgent('local', id), approvals:approvals.list().pending.filter(p => p.sessionId === id) };
     if (view === 'chat') out.messages = agents.transcript(harness, id, session.cwd);
     if (view === 'helpers') out.helpers = session.subagents || [];
     if (view === 'terminal') {
@@ -138,7 +203,26 @@ const routes = {
   'GET /api/agents':() => agents.sessions(),
   'GET /api/ide/thread':(_, url) => ides.thread(url.searchParams.get('app') || '', url.searchParams.get('id') || ''),
   'POST /api/ide/open':async b => { await ides.open(String(b.app), String(b.id)); return { ok:true }; },
-  'GET /api/t3/thread':(_, url) => t3.thread(url.searchParams.get('id') || ''),
+  'GET /api/t3/thread':async (_, url) => ({ ...await t3.thread(url.searchParams.get('id') || ''), queued:queue.forAgent('t3', url.searchParams.get('id') || '') }),
+  'POST /api/queue':b => {
+    const text = String(b.text || '').trim();
+    if (!text) throw fail('Write a message first.');
+    if (!['t3', 'local'].includes(b.kind)) throw fail('Unknown agent.');
+    return queue.add({ kind:b.kind, harness:String(b.harness || ''), agentId:String(b.id), text:text.slice(0, 20000) });
+  },
+  'POST /api/queue/remove':b => { queue.remove(String(b.id)); return { ok:true }; },
+  'POST /api/upload':b => saveUpload(b),
+  'GET /api/git':async (_, url) => git.status(await agentFolder(query(url))),
+  'GET /api/git/diff':async (_, url) => git.diff(await agentFolder(query(url)), url.searchParams.get('file') || ''),
+  'POST /api/git/commit':async b => git.commit(await agentFolder(b), b.message, b.push === true),
+  'POST /api/git/push':async b => git.push(await agentFolder(b)),
+  'POST /api/summary/settings':b => {
+    const next = { ...summarySettings() };
+    if (typeof b.on === 'boolean') next.on = b.on;
+    if (/^\d{2}:\d{2}$/.test(b.time || '')) next.time = b.time;
+    writeJson(summaryFile, next);
+    return next;
+  },
   'POST /api/t3/send':async b => { const text = String(b.text || '').trim(); if (!text) throw fail('Write a message first.'); await t3.sendMessage(String(b.id), text.slice(0, 20000)); return { ok:true }; },
   'POST /api/t3/answer':async b => { await t3.answer(String(b.id), String(b.requestId), Object.fromEntries(Object.entries(b.answers || {}).map(([k, v]) => [String(k), String(v).slice(0, 4000)]))); return { ok:true }; },
   'POST /api/t3/stop':async b => { await t3.stop(String(b.id)); return { ok:true }; },
@@ -146,12 +230,7 @@ const routes = {
   'POST /api/session/send':async b => {
     const text = String(b.text || '').trim();
     if (!text || text.length > 20000) throw fail('Write a message first.');
-    const session = await agents.findSession(String(b.harness), String(b.id));
-    const { delivery, tty, note, canMove } = await sessionDelivery(session);
-    if (delivery === 'terminal') await terminal.sendText(tty, session.harness, text);
-    else if (delivery === 'resume' || (canMove && b.move)) await agents.resume(session.harness, session.id, session.cwd, text);
-    else throw fail(note, 409);
-    return { ok:true, delivery };
+    return { ok:true, delivery:await sendToSession(String(b.harness), String(b.id), text, Boolean(b.move)) };
   },
   'POST /api/session/rename':async b => {
     const session = await agents.findSession(String(b.harness), String(b.id));
@@ -196,7 +275,7 @@ const routes = {
   'GET /api/approvals':() => approvals.list(),
   'POST /api/approvals/decide':b => {
     const answers = b.answers && typeof b.answers === 'object' ? Object.fromEntries(Object.entries(b.answers).map(([k, v]) => [String(k), String(v).slice(0, 4000)])) : null;
-    approvals.decide(String(b.id), String(b.decision), b.message ? String(b.message).slice(0, 2000) : '', answers);
+    approvals.decide(String(b.id), String(b.decision), b.message ? String(b.message).slice(0, 2000) : '', answers, b.always === true);
     return { ok:true };
   },
   'POST /api/approvals/settings':b => approvals.updateSettings(b),
@@ -210,7 +289,7 @@ const routes = {
     return {
       version:updater.status(), tailscale:await tailscale.status(), power:await power.status(), phoneUrl:phoneUrl(), relay:{ ...relay.status(), keyReady:Boolean(auth.relayKeyInfo()) },
       tunnel:{ ...tunnel.status(), status:installed ? tunnel.status().status : 'missing' }, installingCloudflared:updates.installing('cloudflared'), pairingAt,
-      hook:hookStatus(), approvals:approvals.settings(), history:approvals.list().history,
+      hook:hookStatus(), approvals:approvals.settings(), history:approvals.list().history, summary:summarySettings(),
       devices:auth.listDevices(), deviceId:device.id,
     };
   },
@@ -447,7 +526,7 @@ export function createServer() {
       if (url.pathname === '/api/session/file' && req.method === 'GET') return await serveFile(req, res, url);
       const handler = routes[`${req.method} ${url.pathname}`];
       if (!handler) throw fail('Not found', 404);
-      const body = req.method === 'POST' ? await readBody(req) : null;
+      const body = req.method === 'POST' ? await readBody(req, url.pathname === '/api/upload' ? 12 << 20 : 1 << 20) : null;
       const result = await handler(body, url, req, device);
       if (result?.raw) return send(res, 200, result.raw, { 'content-type':result.type });
       send(res, 200, result ?? { ok:true });
@@ -470,6 +549,9 @@ export function main() {
   relay.boot(PORT);
   t3.boot();
   updater.boot();
+  cleanUploads();
+  setInterval(() => queue.flush(agentFree, deliverQueued).catch(() => {}), 3000).unref();
+  setInterval(() => dailySummary().catch(() => {}), 60000).unref();
   preview.createProxy().listen(preview.PREVIEW_PORT, '127.0.0.1');
 }
 

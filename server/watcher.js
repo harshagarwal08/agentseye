@@ -55,7 +55,8 @@ export function start() {
   setInterval(async () => {
     for (const c of await ides.list().catch(() => [])) {
       const key = `${c.app}:${c.id}`;
-      if (ideWas.get(key) === 'busy' && c.status === 'done') push.notify({ title:`✅ ${c.title}`, body:`${c.app === 'cursor' ? 'Cursor' : 'VS Code'} · Done`, url:`/#/i/${c.app}/${c.id}`, tag:`ide-${key}` });
+      if (c.status === 'waiting' && ideWas.has(key) && ideWas.get(key) !== 'waiting') push.notify({ title:`✋ ${c.title}`, body:'Cursor · Waiting for you to approve a step', url:`/#/i/${c.app}/${c.id}`, tag:`ide-${key}` });
+      if (['busy', 'waiting'].includes(ideWas.get(key)) && c.status === 'done') push.notify({ title:`✅ ${c.title}`, body:`${c.app === 'cursor' ? 'Cursor' : 'VS Code'} · Done`, url:`/#/i/${c.app}/${c.id}`, tag:`ide-${key}` });
       ideWas.set(key, c.status);
     }
   }, 15000).unref();
