@@ -44,6 +44,8 @@ export function claudeLive() {
     try {
       const r = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
       if (!r.sessionId || !Number.isInteger(r.pid) || !alive(r.pid)) continue;
+      // A chat moved from VS Code to Terminal runs in both for a while; the Terminal one is the one we can type into.
+      if (live.get(r.sessionId)?.entrypoint === 'cli' && r.entrypoint !== 'cli') continue;
       live.set(r.sessionId, { pid:r.pid, cwd:r.cwd, name:r.name || '', status:r.status || 'open', entrypoint:r.entrypoint || '', startedAt:r.startedAt || null, version:r.version || '' });
     } catch { /* The session may be mid-write. */ }
   }

@@ -326,3 +326,6 @@ button.primary.busy::after, button.good.busy::after, .send.busy::after { border-
 .question .q { display:grid; gap:6px; }
 .opts { display:grid; gap:6px; }
 .opts button { text-align:left; background:var(--card-2); font-weight:600; }
+.opts button.on { box-shadow:inset 0 0 0 2px var(--accent, #c8553d); }
+.question .actions { display:flex; justify-content:flex-end; gap:8px; }
+.question [data-other] { font-size:15px; }

@@ -97,6 +97,21 @@ test('hook round trip: request waits for a decision from the phone', async () =>
   assert.deepEqual(JSON.parse(out), { hookSpecificOutput:{ hookEventName:'PermissionRequest', decision:{ behavior:'deny', message:'not now' } } });
 });
 
+test('questions Claude asks are answered from the phone with the chosen option', async () => {
+  const hook = spawn(process.execPath, [path.resolve('hooks/permission-hook.mjs')], { env:{ ...process.env } });
+  let out = '';
+  hook.stdout.on('data', c => { out += c; });
+  const questions = [{ question:'Which color?', header:'Color', multiSelect:false, options:[{ label:'Red' }, { label:'Blue' }] }];
+  hook.stdin.end(JSON.stringify({ session_id:'abc', cwd:'/tmp', tool_name:'AskUserQuestion', tool_input:{ questions } }));
+  let pending = [];
+  for (let i = 0; i < 60 && !pending.length; i++) { await new Promise(r => setTimeout(r, 50)); pending = (await call('/api/approvals', undefined, { cookie:mac })).body.pending; }
+  // Allowing without an answer would leave Claude with nothing, so it is refused.
+  assert.equal((await call('/api/approvals/decide', { id:pending[0].id, decision:'allow' }, { cookie:mac })).status, 400);
+  assert.equal((await call('/api/approvals/decide', { id:pending[0].id, decision:'allow', answers:{ 'Which color?':'Blue' } }, { cookie:mac })).status, 200);
+  await new Promise(r => hook.on('close', r));
+  assert.deepEqual(JSON.parse(out), { hookSpecificOutput:{ hookEventName:'PermissionRequest', decision:{ behavior:'allow', updatedInput:{ questions, answers:{ 'Which color?':'Blue' } } } } });
+});
+
 test('hook falls through when holding is off, and only accepts local callers with the token', async () => {
   await call('/api/approvals/settings', { hold:false }, { cookie:mac });
   const hook = spawn(process.execPath, [path.resolve('hooks/permission-hook.mjs')], { env:{ ...process.env } });

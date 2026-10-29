@@ -40,14 +40,19 @@ export function request(input) {
   return { id:base.id, answer };
 }
 
-export function decide(id, decision, message) {
+// Questions Claude asks (AskUserQuestion) are answered by allowing the tool with the answers filled in,
+// keyed by each question's text, the same way Claude's own picker does.
+export function decide(id, decision, message, answers) {
   const entry = pending.get(id);
   if (!entry) throw Object.assign(new Error('That request is no longer waiting.'), { status:404 });
   if (!['allow', 'deny'].includes(decision)) throw Object.assign(new Error('Decision must be allow or deny.'), { status:400 });
+  if (decision === 'allow' && entry.tool === 'AskUserQuestion' && !answers) throw Object.assign(new Error('Pick an answer first.'), { status:400 });
   clearTimeout(entry.timer);
   pending.delete(id);
   record(entry, decision, 'dashboard');
-  entry.resolve({ decision, message:message || (decision === 'deny' ? 'Denied from AgentsEye.' : '') });
+  const out = { decision, message:message || (decision === 'deny' ? 'Denied from AgentsEye.' : '') };
+  if (decision === 'allow' && answers && entry.tool === 'AskUserQuestion') out.updatedInput = { ...entry.input, answers };
+  entry.resolve(out);
 }
 
 // If Claude gives up (user answered in the terminal, session closed), the hook disconnects and we drop the card.

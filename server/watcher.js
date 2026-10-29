@@ -67,6 +67,10 @@ export function start() {
   }, 5 * 60000).unref();
 
   approvals.onRequest(r => {
+    if (r.tool === 'AskUserQuestion') {
+      const q = r.input?.questions?.[0];
+      return push.notify({ title:`${label(r.sessionId, r.cwd)} needs your input`, body:q?.question || 'Tap to answer.', url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` });
+    }
     const what = r.input?.command || r.input?.file_path || r.input?.url || '';
     push.notify({ title:`${label(r.sessionId, r.cwd)}: allow ${r.tool}?`, body:what.slice(0, 160), url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` });
   });

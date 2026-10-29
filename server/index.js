@@ -98,7 +98,9 @@ async function sessionDelivery(session) {
   const tty = session.pid ? await terminal.ttyOf(session.pid) : '';
   if (tty && await terminal.inTerminal(tty)) return { delivery:'terminal', tty };
   const where = { 'claude-vscode':'VS Code', 'codex-vscode':'VS Code', 'sdk-ts':'another app', cli:'another terminal app' }[session.entrypoint] || 'another app';
-  return { delivery:'none', tty, note:`Open in ${where}. Send to continue in a copy in Terminal.` };
+  // Chats in an editor can't be typed into, but the same conversation can carry on in Terminal, where we can.
+  const canMove = ['claude-vscode', 'codex-vscode'].includes(session.entrypoint);
+  return { delivery:'none', tty, canMove, note:canMove ? `Open in ${where}. Sending moves this chat to Terminal on your Mac.` : `Open in ${where}. Reply from there.` };
 }
 
 const routes = {
@@ -120,8 +122,8 @@ const routes = {
       if (!sub) throw fail('Subagent not found.', 404);
       return { session, subagent:sub, messages:agents.transcript(harness, id, session.cwd, { agent }) };
     }
-    const { delivery, tty, note } = await sessionDelivery(session);
-    const out = { session, delivery, deliveryNote:note || '', approvals:approvals.list().pending.filter(p => p.sessionId === id) };
+    const { delivery, tty, note, canMove } = await sessionDelivery(session);
+    const out = { session, delivery, deliveryNote:note || '', canMove:Boolean(canMove), approvals:approvals.list().pending.filter(p => p.sessionId === id) };
     if (view === 'chat') out.messages = agents.transcript(harness, id, session.cwd);
     if (view === 'helpers') out.helpers = session.subagents || [];
     if (view === 'terminal') {
@@ -145,9 +147,9 @@ const routes = {
     const text = String(b.text || '').trim();
     if (!text || text.length > 20000) throw fail('Write a message first.');
     const session = await agents.findSession(String(b.harness), String(b.id));
-    const { delivery, tty, note } = await sessionDelivery(session);
+    const { delivery, tty, note, canMove } = await sessionDelivery(session);
     if (delivery === 'terminal') await terminal.sendText(tty, session.harness, text);
-    else if (delivery === 'resume') await agents.resume(session.harness, session.id, session.cwd, text);
+    else if (delivery === 'resume' || (canMove && b.move)) await agents.resume(session.harness, session.id, session.cwd, text);
     else throw fail(note, 409);
     return { ok:true, delivery };
   },
@@ -192,7 +194,11 @@ const routes = {
   'POST /api/privacy/open':async (b, _, req) => { localOnly(req); await privacy.openPane(String(b.service || '')); return { ok:true }; },
 
   'GET /api/approvals':() => approvals.list(),
-  'POST /api/approvals/decide':b => { approvals.decide(String(b.id), String(b.decision), b.message ? String(b.message).slice(0, 2000) : ''); return { ok:true }; },
+  'POST /api/approvals/decide':b => {
+    const answers = b.answers && typeof b.answers === 'object' ? Object.fromEntries(Object.entries(b.answers).map(([k, v]) => [String(k), String(v).slice(0, 4000)])) : null;
+    approvals.decide(String(b.id), String(b.decision), b.message ? String(b.message).slice(0, 2000) : '', answers);
+    return { ok:true };
+  },
   'POST /api/approvals/settings':b => approvals.updateSettings(b),
   'POST /api/approvals/hook':(b, _, req) => { localOnly(req); return b.install ? installHook() : uninstallHook(); },
 

@@ -548,7 +548,7 @@ async function homeView() {
       ${isPhone && !standalone() && !localStorage.getItem('install-hidden') ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Get the app</b><div class="small muted">Add to your Home Screen for full screen and notifications.</div></div><button class="small primary" id="install">Add</button><button class="ghost small" id="install-x" aria-label="Dismiss">✕</button></div>' : ''}
       ${guideCard()}
       ${d.devicesWaiting.map(dev => `<div class="banner"><div class="grow"><b>${esc(dev.name)}</b> wants to sign in<div class="small muted">${ago(dev.createdAt)}${me.local ? '' : ' · approve it on the Mac'}</div></div>${me.local ? `<button class="good small" data-approve="${dev.id}">Approve</button><button class="ghost small" data-reject="${dev.id}">✕</button>` : ''}</div>`).join('')}
-      ${d.approvals.length ? `<div class="section"><h2>Permission requests<span class="count">${d.approvals.length}</span></h2></div><div class="list">${d.approvals.map(approvalCard).join('')}</div>` : ''}
+      ${d.approvals.length ? `<div class="section"><h2>Waiting on you<span class="count">${d.approvals.length}</span></h2></div><div class="list">${d.approvals.map(approvalCard).join('')}</div>` : ''}
       ${section('Needs you', groups.waiting)}
       ${section('Working', groups.busy)}
       ${recent.length ? `<div class="section"><h2>Recent</h2></div><div class="agents">${recent.slice(0, showAll ? 60 : 8).map(agentRow).join('')}</div>${recent.length > 8 ? `<button class="more" id="more">${showAll ? 'Show less' : `Show ${recent.length - 8} more`}</button>` : ''}` : ''}
@@ -556,6 +556,8 @@ async function homeView() {
       ${!d.t3.connected && d.t3.installed ? `<div class="small muted center">T3 Code isn't running, so its chats aren't shown.</div>` : ''}
       ${limitsCard(d.limits)}`;
     if (html === shown) return;
+    // Don't redraw under someone typing an answer or mid-way through picking several options.
+    if ([...box.querySelectorAll('[data-ask]')].some(c => c.contains(document.activeElement) || c.querySelector('[data-other]')?.value || c.querySelector('.on'))) return;
     shown = html;
     box.innerHTML = html;
     bindApprovals(box, render);
@@ -723,7 +725,18 @@ function pickProject(projects, done) {
 
 // ---------- Approvals ----------
 const summarize = i => i?.command || i?.file_path || i?.url || i?.pattern || i?.description || JSON.stringify(i ?? {}).slice(0, 160);
+// Claude's multiple-choice questions: tap an option (or type your own), and the answer goes straight back to Claude.
+function questionCard(p) {
+  const qs = p.input?.questions || [];
+  const single = qs.length === 1 && !qs[0].multiSelect;
+  return `<div class="question" data-ask="${p.id}"><div class="small muted">${esc(base(p.cwd))} · ${ago(p.createdAt)}</div>
+    ${qs.map((q, n) => `<div class="q" data-n="${n}"><div class="small muted">${esc(q.header || 'Question')}${q.multiSelect ? ' · pick any' : ''}</div><b>${esc(q.question)}</b>
+      <div class="opts">${(q.options || []).map(o => `<button data-opt="${esc(o.label)}"><span>${esc(o.label)}</span>${o.description ? `<div class="small muted">${esc(o.description)}</div>` : ''}</button>`).join('')}</div>
+      <input data-other placeholder="Or type your own answer"></div>`).join('')}
+    <div class="actions"><button class="ghost small" data-deny="${p.id}">Skip</button>${single ? '' : `<button class="primary small" data-send>Send answers</button>`}</div></div>`;
+}
 function approvalCard(p) {
+  if (p.tool === 'AskUserQuestion') return questionCard(p);
   const i = p.input || {};
   let body = `<pre>${esc(JSON.stringify(i, null, 2).slice(0, 3000))}</pre>`;
   if (i.command) body = `<pre>$ ${esc(i.command)}</pre>${i.description ? `<div class="small muted">${esc(i.description)}</div>` : ''}`;
@@ -732,9 +745,36 @@ function approvalCard(p) {
     ${body}<div class="actions"><button class="bad" data-deny="${p.id}">Deny</button><button class="good" data-allow="${p.id}">Allow</button></div></div>`;
 }
 function bindApprovals(root, after) {
+  root.querySelectorAll('[data-ask]').forEach(card => {
+    const id = card.dataset.ask;
+    const blocks = [...card.querySelectorAll('.q')];
+    const single = blocks.length === 1 && !card.querySelector('[data-send]');
+    const submit = () => {
+      const answers = {};
+      for (const b of blocks) {
+        const q = b.querySelector('b').textContent;
+        const picked = [...b.querySelectorAll('[data-opt].on')].map(x => x.dataset.opt);
+        const other = b.querySelector('[data-other]').value.trim();
+        const value = [...picked, ...(other ? [other] : [])].join(', ');
+        if (!value) return toast('Answer every question first.', true);
+        answers[q] = value;
+      }
+      attempt(async () => { await api('/api/approvals/decide', { id, decision:'allow', answers }); card.remove(); after(); }, 'Answered');
+    };
+    blocks.forEach(b => {
+      const multi = /pick any/.test(b.querySelector('.small').textContent);
+      b.querySelectorAll('[data-opt]').forEach(o => o.onclick = () => {
+        if (!multi) b.querySelectorAll('[data-opt]').forEach(x => x.classList.toggle('on', x === o));
+        else o.classList.toggle('on');
+        if (single) submit();
+      });
+      b.querySelector('[data-other]').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } };
+    });
+    card.querySelector('[data-send]')?.addEventListener('click', submit);
+  });
   root.querySelectorAll('[data-allow]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/approvals/decide', { id:b.dataset.allow, decision:'allow' }); after(); }, 'Allowed'));
   root.querySelectorAll('[data-deny]').forEach(b => b.onclick = () => sheet(`<h3>Deny this request?</h3><input id="why" placeholder="Tell Claude what to do instead (optional)"><button class="bad" id="do-deny">Deny</button><button class="ghost" data-close>Cancel</button>`, card => {
-    card.querySelector('#do-deny').onclick = () => { closeSheet(); attempt(async () => { await api('/api/approvals/decide', { id:b.dataset.deny, decision:'deny', message:card.querySelector('#why').value }); after(); }, 'Denied'); };
+    card.querySelector('#do-deny').onclick = () => { closeSheet(); attempt(async () => { await api('/api/approvals/decide', { id:b.dataset.deny, decision:'deny', message:card.querySelector('#why').value }); b.closest('[data-ask]')?.remove(); after(); }, 'Denied'); };
   }));
 }
 
@@ -829,7 +869,7 @@ async function sessionView(harness, id) {
     }
     const keep = $('#reply')?.value || '';
     const busy = s.live && s.status === 'busy';
-    const blocked = info.delivery === 'none' || busy;
+    const blocked = (info.delivery === 'none' && !info.canMove) || busy;
     const hint = busy ? 'The agent is working. You can reply when it finishes.' : { terminal:'Types into its Terminal tab on your Mac', resume:'Resumes it in a Terminal window on your Mac', none:info.deliveryNote || 'Open in another app. Reply from there.' }[info.delivery] || '';
     foot.innerHTML = `${info.approvals.map(approvalCard).join('')}<form class="composer" id="reply-form"><textarea id="reply" rows="1" placeholder="${blocked ? (busy ? 'Waiting for the agent…' : 'Read only') : `Message ${harnessName[harness] || 'agent'}…`}" ${blocked ? 'disabled' : ''}></textarea>
       <div class="bar"><span class="small muted grow">${esc(hint)}</span><button class="send" aria-label="Send" ${blocked ? 'disabled' : ''}>↑</button></div></form>`;
@@ -838,10 +878,11 @@ async function sessionView(harness, id) {
     ta.value = keep;
     ta.oninput = () => grow(ta);
     grow(ta);
-    $('#reply-form').onsubmit = e => {
+    $('#reply-form').onsubmit = async e => {
       e.preventDefault();
       const text = ta.value.trim();
       if (!text) return;
+      if (info.delivery === 'none' && info.canMove && !await confirmSheet('Move this chat to Terminal?', 'The same conversation carries on in a Terminal window on your Mac, so you can keep chatting from your phone. Close it in VS Code so you don’t reply in two places.', 'Move and send')) return;
       ta.value = '';
       grow(ta);
       send(text);
@@ -852,7 +893,7 @@ async function sessionView(harness, id) {
     const o = { text, state:'sending' };
     outbox.push(o);
     paint(false);
-    try { await api('/api/session/send', { harness, id, text }); o.state = 'sent'; }
+    try { await api('/api/session/send', { harness, id, text, move:info?.delivery === 'none' && info.canMove }); o.state = 'sent'; }
     catch (e) { o.state = 'failed'; o.error = e.message; }
     paint(false);
     draw(false).catch(() => {});

@@ -21,10 +21,11 @@ process.stdin.on('end', () => {
     res.on('data', c => { body += c; });
     res.on('end', () => {
       try {
-        const { decision, message } = JSON.parse(body);
+        const { decision, message, updatedInput } = JSON.parse(body);
         if (decision === 'allow' || decision === 'deny') {
           const out = { behavior:decision };
           if (decision === 'deny') out.message = message || 'Denied from AgentsEye.';
+          if (decision === 'allow' && updatedInput) out.updatedInput = updatedInput;
           process.stdout.write(JSON.stringify({ hookSpecificOutput:{ hookEventName:'PermissionRequest', decision:out } }));
         }
       } catch {}
