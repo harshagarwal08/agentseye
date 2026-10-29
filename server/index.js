@@ -16,6 +16,8 @@ import * as tunnel from './tunnel.js';
 import * as tailscale from './tailscale.js';
 import * as power from './power.js';
 import * as preview from './preview.js';
+import * as service from './service.js';
+import { hasSubscriptions } from './push.js';
 import * as push from './push.js';
 import * as watcher from './watcher.js';
 import { recentFiles, safePath, mime } from './files.js';
@@ -197,6 +199,34 @@ const routes = {
   'GET /api/preview':async () => ({ ...preview.status(), servers:preview.candidates(await system.ports()) }),
   'POST /api/preview/open':(b, _, req) => preview.open(b.port, { local:isLocal(req) }),
   'POST /api/preview/stop':() => { preview.stop(); return { ok:true }; },
+  // The start guide: each step is checked against the real state of the Mac, so it ticks itself off.
+  'GET /api/setup':async () => {
+    const [ts, pw, svc] = await Promise.all([tailscale.status(), power.status(), service.status()]);
+    const devices = auth.listDevices();
+    return {
+      phoneLink:ts.serving || tunnel.status().status === 'on',
+      tailscale:ts.state, tailscaleServing:Boolean(ts.serving), cloudflare:tunnel.status().status,
+      phoneSignedIn:devices.some(d => d.remote && d.approved),
+      homeScreen:devices.some(d => d.remote && d.approved && d.standalone),
+      notifications:hasSubscriptions(),
+      approvals:hookStatus().installed,
+      keepAwake:pw.keepAwake !== 'off', lockReady:pw.lockImmediate,
+      startAtLogin:svc.installed && svc.loaded,
+      runningAsService:svc.runningAsService,
+    };
+  },
+  'POST /api/devices/me':(b, _, __, device) => { auth.noteDevice(device.id, { standalone:b.standalone === true }); return { ok:true }; },
+  'POST /api/service/install':async (_, __, req) => {
+    localOnly(req);
+    await service.install();
+    // Hand the port over to the background copy: start it, then step aside if this copy was started by hand.
+    setTimeout(async () => {
+      const st = await service.status();
+      await service.load().catch(error => console.error(error));
+      if (!st.runningAsService) process.exit(0);
+    }, 300);
+    return { ok:true };
+  },
   'POST /api/tunnel':async (b, _, req) => { localOnly(req); return b.on ? tunnel.start() : tunnel.stop(); },
   'POST /api/tunnel/install':async (_, __, req) => {
     localOnly(req);

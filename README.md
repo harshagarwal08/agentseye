@@ -7,7 +7,10 @@ npm install && npm start          # http://localhost:4480 — set a password on 
 node bin/lookout.js install-service   # optional: start at login
 npm test
 ```
-Then on the Mac: **Settings → Use Lookout from your phone** (installs `cloudflared` if missing) → scan the QR → sign in → Share → Add to Home Screen → turn on notifications.
+Open **Start guide** (Home card or Settings): seven steps that tick themselves off. In short, on the Mac: **Settings → Use Lookout from your phone** (installs `cloudflared` if missing) → scan the QR → sign in → Share → Add to Home Screen → turn on notifications.
+
+## App on your phone
+Lookout is a PWA: add it to the Home Screen (iPhone: Safari → Share → Add to Home Screen; Android: Install) and it opens full screen, loads instantly from cache, shows "Can't reach your Mac" when offline, and gets notifications. Long-press the icon for shortcuts: New session, This Mac, Lock my Mac.
 
 ## Home
 - **Usage limits**: Claude Code (live, from its usage endpoint via the Keychain token) and Codex (latest `rate_limits` from its logs) — % used per window and time to reset. Tap to refresh; push alert at 90%.

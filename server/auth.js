@@ -81,6 +81,11 @@ export function setApproval(id, approved) {
   throw fail('Unknown device.', 404);
 }
 
+// Small facts a device reports about itself, like whether it was opened from the Home Screen.
+export function noteDevice(id, patch) {
+  for (const device of devices.values()) if (device.id === id) { Object.assign(device, patch); saveDevices(); }
+}
+
 export function signOutOthers(currentId) {
   for (const [key, device] of devices) if (device.id !== currentId) devices.delete(key);
   saveDevices();

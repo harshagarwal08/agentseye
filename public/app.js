@@ -182,10 +182,106 @@ function start(state) {
   me = state;
   $('#gate').hidden = true;
   $('#app').hidden = false;
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  // Remember that this device runs Lookout from its Home Screen, for the start guide.
+  if (!state.local) api('/api/devices/me', { standalone:standalone() }).catch(() => {});
   route();
 }
 window.addEventListener('hashchange', () => { if (!$('#app').hidden) route(); });
+
+// ---------- Installing as an app ----------
+// Registered before sign-in so the app shell is cached and opens even when the Mac is unreachable.
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+const isPhone = /iPhone|iPad|iPod|Android/.test(navigator.userAgent);
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
+window.addEventListener('appinstalled', () => { installPrompt = null; toast('Lookout is on your Home Screen'); });
+
+function installSheet() {
+  if (installPrompt) {
+    installPrompt.prompt();
+    installPrompt.userChoice.finally(() => { installPrompt = null; });
+    return;
+  }
+  const safari = isIOS && !/CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
+  sheet(`<h3>Add Lookout to your Home Screen</h3>
+    ${isIOS && !safari ? '<p class="small muted">On iPhone this only works from Safari. Copy this page\'s address and open it in Safari first.</p><button class="primary" id="copy-url">Copy address</button>' : isIOS ? `
+    <ol class="steps"><li>Tap the <b>Share</b> button <span class="kbd">⬆︎</span> at the bottom of Safari.</li><li>Scroll down and tap <b>Add to Home Screen</b>.</li><li>Tap <b>Add</b>, then open Lookout from your Home Screen.</li></ol>
+    <p class="small muted">It opens full screen like an app, and it is the only way iPhone allows notifications.</p>` : `
+    <ol class="steps"><li>Open your browser's <b>⋮</b> menu.</li><li>Tap <b>Install app</b> or <b>Add to Home screen</b>.</li></ol>`}
+    <button class="ghost" data-close>Done</button>`, card => {
+    card.querySelector('#copy-url')?.addEventListener('click', () => navigator.clipboard.writeText(location.origin).then(() => toast('Copied. Paste it into Safari.')));
+  });
+}
+
+// ---------- Start guide ----------
+// Seven steps, each ticked off from the Mac's real state rather than from what was clicked.
+let setup = null;
+const loadSetup = async () => { setup = await api('/api/setup'); return setup; };
+function guideSteps(st) {
+  const onMac = me.local;
+  return [
+    { id:'link', done:st.phoneLink, title:'Turn on phone access',
+      why:'Gives Lookout a secure link your phone can open from anywhere. Tailscale is private and its address never changes; Cloudflare works without an account but its address changes on restart.',
+      action:onMac ? '<a href="#/settings"><button class="small primary">Open Settings</button></a>' : '' , macOnly:true },
+    { id:'signin', done:st.phoneSignedIn, title:'Sign in on your phone',
+      why:'Scan the QR code on your Mac with your phone camera, then enter your password. Scanning skips the approval step.',
+      action:onMac ? (st.phoneLink ? '<img class="guide-qr" src="/api/pair/qr?ts=guide" alt="QR code">' : '<span class="small muted">Turn on phone access first</span>') : '', macOnly:true },
+    { id:'home', done:st.homeScreen, title:'Add it to your Home Screen',
+      why:'Lookout then opens full screen like an app. On iPhone this is also required for notifications.',
+      action:isPhone && !standalone() ? '<button class="small primary" data-install>Show me how</button>' : '<span class="small muted">Do this on your phone</span>' },
+    { id:'notify', done:st.notifications, title:'Turn on notifications',
+      why:'Get a ping when an agent needs your OK, finishes, or a usage limit runs low.',
+      action:canPush() ? '<button class="small primary" data-push>Turn on</button>' : `<span class="small muted">${isIOS && !standalone() ? 'Open Lookout from your Home Screen first' : 'Do this on your phone'}</span>` },
+    { id:'approvals', done:st.approvals, title:"Answer Claude's permission prompts",
+      why:'Claude asks before running commands or editing files. With this on, those questions come to your phone with Allow and Deny.',
+      action:onMac ? '<button class="small primary" data-hook>Turn on</button>' : '', macOnly:true },
+    { id:'awake', done:st.keepAwake, title:'Keep your Mac awake',
+      why:'Agents stop when the Mac sleeps. Leave the lid open and lock the screen; Lookout keeps it awake while plugged in.',
+      action:'<button class="small primary" data-awake>Turn on</button>' },
+    { id:'login', done:st.startAtLogin, title:'Start Lookout at login',
+      why:'So it is always there after a restart, without a Terminal window.',
+      action:onMac ? '<button class="small primary" data-login>Turn on</button>' : '', macOnly:true },
+  ];
+}
+const canPush = () => 'PushManager' in window && window.isSecureContext && location.protocol === 'https:' && (!isIOS || standalone());
+
+function guideCard() {
+  if (!setup || localStorage.getItem('guide-hidden')) return '';
+  const steps = guideSteps(setup);
+  const left = steps.filter(x => !x.done);
+  if (!left.length) return '';
+  const next = left[0];
+  return `<a class="guide-card" href="#/guide"><div class="grow"><div class="small muted">Get started · ${steps.length - left.length} of ${steps.length} done</div><b>Next: ${esc(next.title)}</b>
+    <div class="meter"><i style="width:${Math.round((steps.length - left.length) / steps.length * 100)}%"></i></div></div><span class="chev">›</span></a>`;
+}
+
+async function guideView() {
+  const view = $('#view');
+  const render = async () => {
+    const st = await loadSetup();
+    const steps = guideSteps(st);
+    const done = steps.filter(x => x.done).length;
+    view.innerHTML = `<div class="top"><button class="back" onclick="history.back()" aria-label="Back">‹</button><h1>Start guide</h1></div>
+      <p class="muted" style="margin-top:-8px">${done === steps.length ? 'All set. Lookout is ready to use from your phone.' : `${done} of ${steps.length} done. Steps tick themselves off as you go.`}</p>
+      <ol class="guide">${steps.map((x, i) => `<li class="${x.done ? 'done' : ''}"><span class="num">${x.done ? '✓' : i + 1}</span><div class="grow"><b>${esc(x.title)}</b><div class="small muted">${x.why}</div>
+        ${x.done ? '' : `<div class="guide-act">${x.macOnly && !me.local ? '<span class="small muted">Do this on your Mac</span>' : x.action}</div>`}</div></li>`).join('')}</ol>
+      ${done < steps.length ? '<button class="ghost" id="hide-guide" style="width:100%">Hide from Home</button>' : ''}`;
+    view.querySelector('[data-install]')?.addEventListener('click', installSheet);
+    view.querySelector('[data-push]')?.addEventListener('click', () => attempt(async () => { await enablePush(); render(); }, 'Notifications on'));
+    view.querySelector('[data-hook]')?.addEventListener('click', () => attempt(async () => { await api('/api/approvals/hook', { install:true }); render(); }, 'On. Restart Claude sessions to use it.'));
+    view.querySelector('[data-awake]')?.addEventListener('click', () => attempt(async () => { await api('/api/power/keep-awake', { mode:'plugged' }); render(); }, 'Keeping your Mac awake while plugged in'));
+    view.querySelector('[data-login]')?.addEventListener('click', () => attempt(async () => {
+      await api('/api/service/install', {});
+      toast('Lookout is restarting in the background…');
+      setTimeout(() => location.reload(), 8000);
+    }));
+    $('#hide-guide')?.addEventListener('click', () => { localStorage.setItem('guide-hidden', '1'); location.hash = '#/'; });
+  };
+  await firstLoad(view, render, `<div class="top"><h1>Start guide</h1></div>${skeleton(7)}`);
+  every(5000, () => render().catch(() => {}));
+}
 
 function route() {
   stop();
@@ -195,7 +291,7 @@ function route() {
   document.querySelectorAll('#tabs [data-tab]').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
   document.body.classList.toggle('in-session', page === 's');
   window.scrollTo(0, 0);
-  const view = { s:() => (rest[2] === 'a' ? subagentView(rest[0], decodeURIComponent(rest[1] || ''), decodeURIComponent(rest[3] || '')) : sessionView(rest[0], decodeURIComponent(rest[1] || ''))), system:() => systemView(rest[0] || 'processes'), settings:settingsView }[page] || homeView;
+  const view = { s:() => (rest[2] === 'a' ? subagentView(rest[0], decodeURIComponent(rest[1] || ''), decodeURIComponent(rest[3] || '')) : sessionView(rest[0], decodeURIComponent(rest[1] || ''))), system:() => systemView(rest[0] || 'processes'), guide:guideView, new:() => { location.replace('#/'); setTimeout(() => $('#draft')?.focus(), 600); }, lock:() => { location.replace('#/'); setTimeout(lockMac, 600); }, settings:settingsView }[page] || homeView;
   view();
   pollBadges();
   every(4000, pollBadges);
@@ -313,6 +409,8 @@ async function homeView() {
     const cpu = Math.min(100, Math.round(st.load[0] / st.cpus * 100));
     const html = `
       <div class="top"><h1>Lookout</h1><span class="mac"><span class="dot green"></span>${esc(st.host.replace(/\.local$/, ''))}</span></div>
+      ${isPhone && !standalone() && !localStorage.getItem('install-hidden') ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Get the Lookout app</b><div class="small muted">Open it from your Home Screen, full screen, with notifications.</div></div><button class="small primary" id="install">Add</button><button class="ghost small" id="install-x" aria-label="Dismiss">✕</button></div>' : ''}
+      ${guideCard()}
       ${limitsCard(d.limits)}
       ${d.devicesWaiting.map(dev => `<div class="banner"><div class="grow"><b>${esc(dev.name)}</b> wants to sign in<div class="small muted">${ago(dev.createdAt)}${me.local ? '' : ' · approve it on the Mac'}</div></div>${me.local ? `<button class="good small" data-approve="${dev.id}">Approve</button><button class="ghost small" data-reject="${dev.id}">✕</button>` : ''}</div>`).join('')}
       ${d.approvals.length || waiting.length ? `<div class="section"><h2>Needs you<span class="count">${d.approvals.length + waiting.length}</span></h2></div><div class="list">
@@ -346,11 +444,15 @@ async function homeView() {
     bindApprovals(box, render);
     $('#more')?.addEventListener('click', () => { showAll = !showAll; render(); });
     $('#qa-lock').onclick = lockMac;
+    $('#install')?.addEventListener('click', installSheet);
+    $('#install-x')?.addEventListener('click', () => { localStorage.setItem('install-hidden', '1'); shown = ''; render(); });
     $('#qa-preview').onclick = previewSheet;
     $('#limits')?.addEventListener('click', () => attempt(async () => { await api('/api/usage?force=1'); shown = ''; render(); }, 'Refreshed'));
     box.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/approve', { id:b.dataset.approve }); render(); }, 'Device approved'));
     box.querySelectorAll('[data-reject]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/remove', { id:b.dataset.reject }); render(); }));
   };
+  loadSetup().then(() => { shown = ''; return render(); }).catch(() => {});
+  every(30000, () => loadSetup().catch(() => {}));
   await firstLoad(box, render, skeletonHome());
   every(4000, () => render().catch(() => {}));
 }
@@ -741,7 +843,8 @@ async function settingsView() {
     const s = await api('/api/settings');
     const t = s.tunnel;
     const pushOn = await pushState();
-    const html = `<div class="top"><h1>Settings</h1></div>
+    const html = `<div class="top"><h1>Settings</h1><a href="#/guide"><button class="small">Start guide</button></a></div>
+      ${isPhone && !standalone() ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Add Lookout to your Home Screen</b><div class="small muted">Opens full screen, needed for notifications on iPhone.</div></div><button class="small primary" id="install-s">How</button></div>' : ''}
       <div class="section"><h2>Phone access</h2></div>
       <div class="group">
         <div class="item"><div class="grow"><b>Private link with Tailscale</b> <span class="chip green">Recommended</span><div class="s">${{ missing:'A free app that links your own devices. The address never changes and nobody else can reach it.', 'signed-out':'Installed. Open Tailscale and sign in, on this Mac and on your phone.', stopped:'Tailscale is off. Open it and connect.', running:s.tailscale.serving ? `On · ${esc(s.tailscale.url)}` : 'Connected. Turn on to serve Lookout to your devices.' }[s.tailscale.state] || 'Unavailable'}</div></div>
@@ -779,6 +882,7 @@ async function settingsView() {
     if (html === shown) return;
     shown = html;
     view.innerHTML = html;
+    $('#install-s')?.addEventListener('click', installSheet);
     $('#ts')?.addEventListener('change', e => attempt(async () => { await api('/api/tailscale', { on:e.target.checked }); shown = ''; render(); }, e.target.checked ? 'Serving on your tailnet' : 'Stopped'));
     $('#ts-open')?.addEventListener('click', () => attempt(() => api('/api/tailscale/open', {})));
     view.querySelectorAll('[data-awake]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/power/keep-awake', { mode:b.dataset.awake }); shown = ''; render(); }, 'Saved'));

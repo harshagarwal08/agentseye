@@ -36,3 +36,4 @@ export async function notify({ title, body, url = '/', tag }) {
   }));
   if (changed) writeJson(subsFile, all);
 }
+export const hasSubscriptions = () => Object.keys(subs()).length > 0;

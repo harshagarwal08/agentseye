@@ -193,3 +193,24 @@ test('lid-closed mode and Tailscale switches are Mac-only', async () => {
   assert.equal((await call('/api/power/lid', { on:true }, { cookie:phone, remote:true })).status, 403);
   assert.equal((await call('/api/tailscale', { on:true }, { cookie:phone, remote:true })).status, 403);
 });
+
+test('start guide reflects real state, including a phone opened from its Home Screen', async () => {
+  let st = (await call('/api/setup', undefined, { cookie:mac })).body;
+  assert.equal(st.homeScreen, false);
+  assert.equal(st.phoneSignedIn, true);
+  const phone = (await call('/api/auth/login', { password:'correct horse', pair:auth.pairingCode().code }, { remote:true })).cookie;
+  await call('/api/devices/me', { standalone:true }, { cookie:phone, remote:true });
+  st = (await call('/api/setup', undefined, { cookie:mac })).body;
+  assert.equal(st.homeScreen, true);
+  assert.equal((await call('/api/service/install', {}, { cookie:phone, remote:true })).status, 403);
+});
+
+test('the app shell is installable: manifest and service worker are served', async () => {
+  const m = await call('/manifest.webmanifest');
+  const manifest = JSON.parse(m.text);
+  assert.equal(manifest.display, 'standalone');
+  assert.ok(manifest.icons.some(i => i.purpose === 'maskable'));
+  assert.ok(manifest.shortcuts.length >= 2);
+  const sw = await call('/sw.js');
+  assert.match(sw.text, /startsWith\('\/api\/'\)/);
+});
