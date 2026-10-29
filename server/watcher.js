@@ -1,5 +1,4 @@
-import path from 'node:path';
-import { claudeLive } from './agents.js';
+import { claudeLive, findSession, transcript, folderName } from './agents.js';
 import { nameOf } from './names.js';
 import * as approvals from './approvals.js';
 import * as auth from './auth.js';
@@ -8,8 +7,18 @@ import { usage } from './usage.js';
 import * as t3 from './t3.js';
 import * as ides from './ides.js';
 
-// Prefer the name the person gave the session; fall back to its folder.
-const label = (id, cwd) => nameOf('claude', id) || path.basename(cwd || '') || 'Claude';
+const clip = (text, n = 140) => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
+
+// A notification reads like a message: the chat's title on top, then what happened and where.
+async function describe(id, cwd) {
+  let s = null;
+  try { s = await findSession('claude', id); } catch {}
+  const title = clip(nameOf('claude', id) || (s?.title && s.title !== '(untitled)' ? s.title : '') || folderName(cwd) || 'Claude Code', 60);
+  const project = folderName(s?.cwd || cwd);
+  let reply = '';
+  try { reply = transcript('claude', id, s?.cwd || cwd, { max:6 }).filter(m => m.role === 'assistant').at(-1)?.text || ''; } catch {}
+  return { title, project, reply };
+}
 
 // Turns state changes into phone notifications: an agent waiting for you, an agent finishing, a device at the door.
 export function start() {
@@ -21,9 +30,9 @@ export function start() {
       if (s.entrypoint === 'sdk-ts') continue;
       const before = last.get(id);
       if (s.status === 'waiting' && before !== 'waiting') {
-        push.notify({ title:`${label(id, s.cwd)} needs your OK`, body:s.name || 'Claude is waiting for you.', url:`/#/s/claude/${id}`, tag:`ask-${id}` });
+        describe(id, s.cwd).then(d => push.notify({ title:`✋ ${d.title}`, body:[d.project, 'Claude needs your OK'].filter(Boolean).join(' · '), url:`/#/s/claude/${id}`, tag:`ask-${id}` }));
       } else if (before === 'busy' && s.status === 'idle') {
-        push.notify({ title:`${label(id, s.cwd)} finished`, body:s.name || 'Claude is done.', url:`/#/s/claude/${id}`, tag:`done-${id}` });
+        describe(id, s.cwd).then(d => push.notify({ title:`✅ ${d.title}`, body:clip(d.reply) || [d.project, 'Done'].filter(Boolean).join(' · '), url:`/#/s/claude/${id}`, tag:`done-${id}` }));
       }
     }
     last = new Map([...now].map(([id, s]) => [id, s.status]));
@@ -36,9 +45,9 @@ export function start() {
     const now = t3.summarize(after);
     if (now.status === was.status) return;
     const url = `/#/t/${now.id}`;
-    if (now.status === 'waiting') push.notify({ title:`${now.title} needs your input`, body:now.project ? `${now.project} · tap to answer` : 'Tap to answer', url, tag:`t3-${now.id}` });
-    else if (was.status === 'busy' && now.status === 'done') push.notify({ title:`${now.title} finished`, body:now.preview || 'Tap to see the reply.', url, tag:`t3-${now.id}` });
-    else if (was.status === 'busy' && now.status === 'failed') push.notify({ title:`${now.title} failed`, body:now.error || 'Tap to see what happened.', url, tag:`t3-${now.id}` });
+    if (now.status === 'waiting') push.notify({ title:`✋ ${now.title}`, body:[now.project, 'Needs your input'].filter(Boolean).join(' · '), url, tag:`t3-${now.id}` });
+    else if (was.status === 'busy' && now.status === 'done') push.notify({ title:`✅ ${now.title}`, body:now.preview || [now.project, 'Done'].filter(Boolean).join(' · '), url, tag:`t3-${now.id}` });
+    else if (was.status === 'busy' && now.status === 'failed') push.notify({ title:`⚠️ ${now.title}`, body:now.error || 'Failed. Tap to see what happened.', url, tag:`t3-${now.id}` });
   });
 
   // Cursor and VS Code chats: a ping when one finishes.
@@ -46,7 +55,7 @@ export function start() {
   setInterval(async () => {
     for (const c of await ides.list().catch(() => [])) {
       const key = `${c.app}:${c.id}`;
-      if (ideWas.get(key) === 'busy' && c.status === 'done') push.notify({ title:`${c.title} finished`, body:`${c.app === 'cursor' ? 'Cursor' : 'VS Code'} · tap to see the reply`, url:`/#/i/${c.app}/${c.id}`, tag:`ide-${key}` });
+      if (ideWas.get(key) === 'busy' && c.status === 'done') push.notify({ title:`✅ ${c.title}`, body:`${c.app === 'cursor' ? 'Cursor' : 'VS Code'} · Done`, url:`/#/i/${c.app}/${c.id}`, tag:`ide-${key}` });
       ideWas.set(key, c.status);
     }
   }, 15000).unref();
@@ -69,10 +78,10 @@ export function start() {
   approvals.onRequest(r => {
     if (r.tool === 'AskUserQuestion') {
       const q = r.input?.questions?.[0];
-      return push.notify({ title:`${label(r.sessionId, r.cwd)} needs your input`, body:q?.question || 'Tap to answer.', url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` });
+      return describe(r.sessionId, r.cwd).then(d => push.notify({ title:`✋ ${d.title}`, body:clip(q?.question || 'Needs your input', 160), url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` }));
     }
     const what = r.input?.command || r.input?.file_path || r.input?.url || '';
-    push.notify({ title:`${label(r.sessionId, r.cwd)}: allow ${r.tool}?`, body:what.slice(0, 160), url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` });
+    describe(r.sessionId, r.cwd).then(d => push.notify({ title:`✋ ${d.title}`, body:clip(`Allow ${r.tool}? ${what}`, 160), url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` }));
   });
   auth.onDeviceWaiting(d => push.notify({ title:'New device wants to sign in', body:`${d.name}. Approve it on your Mac if this was you.`, url:'/#/settings', tag:`device-${d.id}` }));
 }

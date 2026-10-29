@@ -8,12 +8,14 @@ const bytes = n => { if (n == null) return '—'; const u = ['B', 'KB', 'MB', 'G
 const ago = t => { if (!t) return ''; const s = Math.round((Date.now() - new Date(t)) / 1000); if (s < 45) return 'just now'; if (s < 3600) return `${Math.round(s / 60)}m ago`; if (s < 86400) return `${Math.round(s / 3600)}h ago`; return `${Math.round(s / 86400)}d ago`; };
 const home = p => String(p || '').replace(/^\/Users\/[^/]+/, '~');
 const base = p => String(p || '').split('/').filter(Boolean).pop() || '~';
+// Tool-made folders ("2026-10-29-can-you-find-vedya-506b6-c4") read better as "can you find vedya".
+const folder = p => { const n = base(p); const t = n.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/(-[0-9a-f]{4,})+(-[0-9a-z]{1,3})?$/i, ''); return t === n ? n : t.replace(/-/g, ' '); };
 const pct = (a, b) => (b ? Math.round(a / b * 100) : 0);
 const level = p => (p > 90 ? 'bad' : p > 75 ? 'warn' : '');
 const harnessName = { claude:'Claude Code', codex:'Codex', cursor:'Cursor', copilot:'Copilot' };
 // What a session is called: the name you gave it, else Claude's AI title or the first prompt.
 const display = s => s.name || s.title || '(untitled)';
-const where = s => [base(s.cwd), s.branch && s.branch !== 'HEAD' ? s.branch : ''].filter(Boolean).join(' · ');
+const where = s => [folder(s.cwd), s.branch && s.branch !== 'HEAD' ? s.branch : ''].filter(Boolean).join(' · ');
 const helpersChip = s => (s.subagents?.running ? `<span class="chip blue">🤖 ${s.subagents.running} working</span>` : '');
 
 // ---------- Talking to the Mac ----------
