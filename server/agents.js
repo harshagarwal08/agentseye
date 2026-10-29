@@ -411,3 +411,12 @@ export async function findNew(harness, cwd, since, id) {
   }
   return { id:null };
 }
+
+// Ends a running agent: a polite SIGTERM first (it saves its transcript), SIGKILL if it is still there after 4 s.
+export async function stop(pid) {
+  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) throw fail('Bad process.');
+  const ps = await run('/bin/ps', ['-o', 'comm=', '-p', String(pid)]);
+  if (!['claude', 'codex', 'node'].includes(path.basename(ps.stdout.trim()))) throw fail('That process is not an agent.', 409);
+  try { process.kill(pid, 'SIGTERM'); } catch { return; }
+  setTimeout(() => { if (alive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} } }, 4000).unref();
+}

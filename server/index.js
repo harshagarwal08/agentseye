@@ -13,6 +13,9 @@ import * as agents from './agents.js';
 import * as approvals from './approvals.js';
 import * as terminal from './terminal.js';
 import * as tunnel from './tunnel.js';
+import * as tailscale from './tailscale.js';
+import * as power from './power.js';
+import * as preview from './preview.js';
 import * as push from './push.js';
 import * as watcher from './watcher.js';
 import { recentFiles, safePath, mime } from './files.js';
@@ -50,8 +53,9 @@ async function readBody(req, limit = 1 << 20) {
 // Lookout only listens on loopback. Phones arrive through cloudflared, which also connects from loopback but
 // sends the tunnel's Host and Cloudflare headers, so "local" means loopback + localhost Host + no proxy headers.
 const localHosts = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`]);
-const isLocal = req => localHosts.has(req.headers.host) && !req.headers['cf-connecting-ip'] && !req.headers['x-forwarded-for'];
-const hostAllowed = req => localHosts.has(req.headers.host) || (tunnel.remoteHost() && req.headers.host === tunnel.remoteHost());
+const isLocal = req => localHosts.has(req.headers.host) && !req.headers['cf-connecting-ip'] && !req.headers['x-forwarded-for'] && !req.headers['tailscale-user-login'];
+const remoteHosts = () => [tunnel.remoteHost(), tailscale.remoteHost()].filter(Boolean);
+const hostAllowed = req => localHosts.has(req.headers.host) || remoteHosts().includes(req.headers.host);
 const clientIp = req => req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '';
 const localOnly = req => { if (!isLocal(req)) throw fail('Only possible on the Mac itself.', 403); };
 
@@ -170,13 +174,29 @@ const routes = {
     const local = isLocal(req);
     const installed = Boolean(await tunnel.binary());
     let pairingAt = 0;
-    if (local && tunnel.status().url) pairingAt = currentPairing().createdAt;
+    if (local && phoneUrl()) pairingAt = currentPairing().createdAt;
     return {
+      tailscale:await tailscale.status(), power:await power.status(), phoneUrl:phoneUrl(),
       tunnel:{ ...tunnel.status(), status:installed ? tunnel.status().status : 'missing' }, installingCloudflared:updates.installing('cloudflared'), pairingAt,
       hook:hookStatus(), approvals:approvals.settings(), history:approvals.list().history,
       devices:auth.listDevices(), deviceId:device.id,
     };
   },
+  'POST /api/tailscale':async (b, _, req) => { localOnly(req); return tailscale.setServing(Boolean(b.on)); },
+  'POST /api/tailscale/open':async (_, __, req) => { localOnly(req); await run('/usr/bin/open', ['-a', 'Tailscale']).then(r => r.ok ? r : run('/usr/bin/open', ['https://tailscale.com/download/mac'])); return { ok:true }; },
+  'POST /api/power/keep-awake':b => power.setKeepAwake(String(b.mode)),
+  'POST /api/power/lid':async (b, _, req) => { localOnly(req); return power.setLidClosed(Boolean(b.on)); },
+  'POST /api/power/lock':async () => { await power.lock(); return { ok:true }; },
+  'POST /api/power/sleep':async () => { await power.sleepNow(); return { ok:true }; },
+  'POST /api/session/stop':async b => {
+    const session = await agents.findSession(String(b.harness), String(b.id));
+    if (!session.live || !session.pid) throw fail('That session is not running.', 409);
+    await agents.stop(session.pid);
+    return { ok:true };
+  },
+  'GET /api/preview':async () => ({ ...preview.status(), servers:preview.candidates(await system.ports()) }),
+  'POST /api/preview/open':(b, _, req) => preview.open(b.port, { local:isLocal(req) }),
+  'POST /api/preview/stop':() => { preview.stop(); return { ok:true }; },
   'POST /api/tunnel':async (b, _, req) => { localOnly(req); return b.on ? tunnel.start() : tunnel.stop(); },
   'POST /api/tunnel/install':async (_, __, req) => {
     localOnly(req);
@@ -185,7 +205,7 @@ const routes = {
   },
   'GET /api/pair/qr':async (_, __, req) => {
     localOnly(req);
-    const url = tunnel.status().url;
+    const url = phoneUrl();
     if (!url) throw fail('Turn on phone access first.', 409);
     const svg = await QRCode.toString(`${url}/#pair=${currentPairing().code}`, { type:'svg', margin:1, color:{ dark:'#2b2620', light:'#fffdf8' } });
     return { raw:svg, type:'image/svg+xml' };
@@ -207,6 +227,8 @@ const routes = {
 };
 
 const currentPairing = auth.pairingCode;
+// The link phones should use: the private Tailscale address if it is on, else the Cloudflare one.
+const phoneUrl = () => (tailscale.remoteHost() ? `https://${tailscale.remoteHost()}` : tunnel.status().url);
 const startOptions = b => ({ model:String(b.model || ''), skipPermissions:b.skipPermissions === true, name:String(b.name || '') });
 
 async function handleAuth(req, res, url) {
@@ -321,7 +343,10 @@ export function main() {
   system.startupItems().catch(() => {});
   watcher.start();
   tunnel.boot();
+  tailscale.boot();
+  power.apply();
   createServer().listen(PORT, '127.0.0.1', () => console.log(`Lookout running at http://localhost:${PORT}`));
+  preview.createProxy().listen(preview.PREVIEW_PORT, '127.0.0.1');
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main();

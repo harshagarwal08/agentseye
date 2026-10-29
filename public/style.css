@@ -261,3 +261,8 @@ button.primary.busy::after, button.good.busy::after, .send.busy::after { border-
 .linkish { background:none; min-height:0; padding:0; color:inherit; text-decoration:underline; font:inherit; }
 .skeleton .sk.card { min-height:170px; }
 .conn { white-space:nowrap; }
+
+.actions-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+.actions-row button { background:var(--card); font-weight:600; font-size:14px; }
+.chip-btn { background:none; padding:0; min-height:0; border-radius:99px; }
+.group > .item .seg button { font-size:13px; }

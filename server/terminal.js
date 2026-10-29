@@ -119,6 +119,25 @@ export async function sendKey(tty, harness, key) {
   await doScript(tty, keys[key]);
 }
 
-export function openWindow(command) {
-  return osascript('on run argv\ntell application "Terminal"\nactivate\ndo script (item 1 of argv)\nend tell\nend run', [`${unsetMarkers} ${command}`]);
+// A new window's shell can take seconds to load (nvm, plugins); text typed before it is ready gets mangled.
+// So: open an empty window, wait until only the shell is in the foreground for a moment, then type the command.
+// The leading space keeps it out of shell history and makes a stray first keystroke harmless.
+const shells = new Set(['zsh', '-zsh', 'bash', '-bash', 'fish', '-fish', 'sh', 'login']);
+export async function shellReady(tty) {
+  const r = await run('/bin/ps', ['-t', path.basename(tty), '-o', 'stat=,comm=']);
+  const fg = r.stdout.split('\n').map(l => l.trim().match(/^(\S+)\s+(.+)$/)).filter(m => m && m[1].includes('+')).map(m => path.basename(m[2]));
+  return fg.length > 0 && fg.every(c => shells.has(c));
+}
+
+export async function openWindow(command, { readyTimeout = 20000 } = {}) {
+  const r = await osascript('tell application "Terminal"\nactivate\nset t to do script ""\nreturn tty of t\nend tell');
+  const tty = r.out.trim();
+  if (!r.ok || !/^\/dev\/ttys\d+$/.test(tty)) return { ok:false, err:r.err || 'Could not open a Terminal window.' };
+  let calm = 0;
+  for (const until = Date.now() + readyTimeout; Date.now() < until && calm < 3;) {
+    await sleep(250);
+    calm = (await shellReady(tty)) ? calm + 1 : 0;
+  }
+  await doScript(tty, ` ${unsetMarkers} ${command}`);
+  return { ok:true, tty };
 }

@@ -182,3 +182,14 @@ test('sessions can be renamed, and the name shows everywhere', async () => {
   await call('/api/session/rename', { harness:'claude', id, name:'' }, { cookie:mac });
   assert.equal((await call('/api/home', undefined, { cookie:mac })).body.sessions.find(s => s.id === id).name, '');
 });
+
+test('stopping refuses sessions that are not running', async () => {
+  const r = await call('/api/session/stop', { harness:'claude', id:'11111111-2222-3333-4444-555555555555' }, { cookie:mac });
+  assert.equal(r.status, 409);
+});
+
+test('lid-closed mode and Tailscale switches are Mac-only', async () => {
+  const phone = (await call('/api/auth/login', { password:'correct horse', pair:auth.pairingCode().code }, { remote:true })).cookie;
+  assert.equal((await call('/api/power/lid', { on:true }, { cookie:phone, remote:true })).status, 403);
+  assert.equal((await call('/api/tailscale', { on:true }, { cookie:phone, remote:true })).status, 403);
+});

@@ -254,6 +254,36 @@ function openWhenReady(started, name) {
   setTimeout(tick, 1500);
 }
 
+// ---------- Mac controls ----------
+async function lockMac() {
+  if (!await confirmSheet('Lock your Mac?', 'The screen turns off and locks. Agents keep running; your password is needed to use it.', 'Lock now')) return;
+  attempt(() => api('/api/power/lock', {}), 'Mac locked');
+}
+
+// Lists dev servers found on the Mac and opens the chosen one in a new tab through the signed-in preview proxy.
+async function previewSheet() {
+  sheet(`<h3>Preview a dev server</h3>${skeleton(3)}`);
+  let d;
+  try { d = await api('/api/preview'); } catch (e) { sheet(`<h3>Preview a dev server</h3>${errorPanel(e)}`, card => { card.querySelector('[data-retry]').onclick = previewSheet; }); return; }
+  sheet(`<h3>Preview a dev server</h3><p class="small muted">Opens the app running on your Mac in a new tab, with live reload. Only your signed-in devices can see it.</p>
+    ${d.servers.length ? `<div class="list">${d.servers.map(v => `<button class="row" data-port="${v.port}" style="text-align:left"><div class="metric" style="text-align:left;min-width:64px">:${v.port}</div><div class="grow"><div class="t">${esc(v.command)}</div><div class="s">localhost:${v.port}${d.port === v.port ? ' · open now' : ''}</div></div><span class="chev">›</span></button>`).join('')}</div>` : '<div class="empty">No dev servers are running. Start one (npm run dev…) or type a port.</div>'}
+    <div class="row" style="background:none;padding:0"><input id="pv-port" inputmode="numeric" placeholder="Other port, e.g. 5173"><button class="primary" id="pv-go">Open</button></div>
+    ${d.port ? '<button class="ghost" id="pv-stop">Stop previewing</button>' : ''}<button class="ghost" data-close>Close</button>`, card => {
+    const go = port => {
+      // Open the tab now, inside the tap, so phones don't block it as a pop-up; fill in the address once known.
+      const tab = window.open('', '_blank');
+      attempt(async () => {
+        const r = await api('/api/preview/open', { port });
+        if (tab) tab.location = r.url; else location.href = r.url;
+        closeSheet();
+      }).then(r => { if (tab && tab.location.href === 'about:blank') tab.close(); });
+    };
+    card.querySelectorAll('[data-port]').forEach(b => b.onclick = () => go(Number(b.dataset.port)));
+    card.querySelector('#pv-go').onclick = () => go(Number(card.querySelector('#pv-port').value));
+    card.querySelector('#pv-stop')?.addEventListener('click', () => attempt(async () => { await api('/api/preview/stop', {}); closeSheet(); }, 'Preview stopped'));
+  });
+}
+
 // ---------- Limits ----------
 const until = t => { if (!t) return ''; const m = Math.max(0, Math.round((t - Date.now()) / 60000)); if (m < 60) return `${m}m`; const h = Math.floor(m / 60); if (h < 48) return `${h}h ${m % 60}m`; return `${Math.round(h / 24)}d`; };
 const planName = p => String(p || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -306,6 +336,7 @@ async function homeView() {
         ${glance('#/system/ports', 'Disk free', bytes(st.disk?.free), disk)}
         ${glance('#/system/updates', 'Updates', d.updates, null)}
       </div>
+      <div class="actions-row"><button id="qa-preview">🌐 Preview dev server</button><button id="qa-lock">🔒 Lock Mac</button></div>
       <div id="composer-slot"></div>`;
     if (html === shown) return;
     shown = html;
@@ -314,6 +345,8 @@ async function homeView() {
     composer(d.projects, keep, render);
     bindApprovals(box, render);
     $('#more')?.addEventListener('click', () => { showAll = !showAll; render(); });
+    $('#qa-lock').onclick = lockMac;
+    $('#qa-preview').onclick = previewSheet;
     $('#limits')?.addEventListener('click', () => attempt(async () => { await api('/api/usage?force=1'); shown = ''; render(); }, 'Refreshed'));
     box.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/approve', { id:b.dataset.approve }); render(); }, 'Device approved'));
     box.querySelectorAll('[data-reject]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/remove', { id:b.dataset.reject }); render(); }));
@@ -396,10 +429,21 @@ async function sessionView(harness, id) {
   let tab = 'chat';
   let info = null;
   const view = $('#view');
-  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar">${avatar(harness, 'open')}</div><button class="grow title-btn" id="s-name" aria-label="Rename"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></button><span id="s-chip"></span></div>
+  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar">${avatar(harness, 'open')}</div><button class="grow title-btn" id="s-name" aria-label="Rename"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></button><button class="chip-btn" id="s-chip" aria-label="Session actions"></button></div>
     <div class="seg" id="s-tabs"><button data-t="chat" class="on">Chat</button>${harness === 'claude' ? '<button data-t="helpers">Helpers</button>' : ''}<button data-t="terminal">Terminal</button><button data-t="files">Files</button></div></header>
     <div class="pane" id="pane"></div><div class="foot" id="foot"></div></div>`;
   $('#back').onclick = () => { location.hash = '#/'; };
+  $('#s-chip').onclick = () => {
+    const s = info?.session;
+    if (!s) return;
+    sheet(`<h3>${esc(display(s))}</h3><div class="small muted">${esc(where(s))}${s.pid ? ` · pid ${s.pid}` : ''}</div>
+      <button data-a="rename">Rename</button>
+      ${s.live ? '<button class="bad" data-a="stop">Stop this session</button><div class="small muted">Ends the agent on your Mac. The conversation is kept, and sending a message later resumes it.</div>' : ''}
+      <button class="ghost" data-close>Close</button>`, card => {
+      card.querySelector('[data-a=rename]').onclick = () => renameSheet(harness, id, s, () => draw(false));
+      card.querySelector('[data-a=stop]')?.addEventListener('click', () => attempt(async () => { await api('/api/session/stop', { harness, id }); closeSheet(); setTimeout(() => draw(false).catch(() => {}), 1500); }, 'Stopping…'));
+    });
+  };
   $('#s-name').onclick = () => renameSheet(harness, id, info?.session, () => draw(false));
   const pane = $('#pane');
   const foot = $('#foot');
@@ -427,7 +471,7 @@ async function sessionView(harness, id) {
     $('#s-sub').textContent = where(s);
     const helperTab = $('#s-tabs [data-t=helpers]');
     if (helperTab) helperTab.textContent = s.subagents?.length ? `Helpers ${s.subagents.filter(a => a.status === 'running').length || s.subagents.length}` : 'Helpers';
-    $('#s-chip').innerHTML = statusChip(s);
+    $('#s-chip').innerHTML = `${statusChip(s)}<span class="muted" style="margin-left:4px">⋯</span>`;
     $('#s-avatar').innerHTML = avatar(harness, s.live ? s.status : 'off');
     let html;
     if (tab === 'chat') {
@@ -700,12 +744,22 @@ async function settingsView() {
     const html = `<div class="top"><h1>Settings</h1></div>
       <div class="section"><h2>Phone access</h2></div>
       <div class="group">
-        <div class="item"><div class="grow"><b>Use Lookout from your phone</b><div class="s">${{ on:'On · private https link through Cloudflare', missing:'Needs cloudflared (free, installs with Homebrew)', off:'Off · only this Mac can open Lookout', starting:'Starting…', restarting:'Reconnecting…' }[t.status] || esc(t.status)}</div></div>
+        <div class="item"><div class="grow"><b>Private link with Tailscale</b> <span class="chip green">Recommended</span><div class="s">${{ missing:'A free app that links your own devices. The address never changes and nobody else can reach it.', 'signed-out':'Installed. Open Tailscale and sign in, on this Mac and on your phone.', stopped:'Tailscale is off. Open it and connect.', running:s.tailscale.serving ? `On · ${esc(s.tailscale.url)}` : 'Connected. Turn on to serve Lookout to your devices.' }[s.tailscale.state] || 'Unavailable'}</div></div>
+          ${me.local ? (s.tailscale.state === 'running' ? `<label class="switch"><input type="checkbox" id="ts" ${s.tailscale.serving ? 'checked' : ''}><i></i></label>` : `<button class="small" id="ts-open">${s.tailscale.state === 'missing' ? 'Get it' : 'Open'}</button>`) : ''}</div>
+        <div class="item"><div class="grow"><b>Public link with Cloudflare</b><div class="s">${{ on:'On · private https link through Cloudflare', missing:'Needs cloudflared (free, installs with Homebrew)', off:'Off · only this Mac can open Lookout', starting:'Starting…', restarting:'Reconnecting…' }[t.status] || esc(t.status)}</div></div>
           ${me.local ? (t.status === 'missing' ? `<button class="small primary" id="install-cf" ${s.installingCloudflared ? 'disabled' : ''}>${s.installingCloudflared ? 'Installing…' : 'Install'}</button>` : `<label class="switch"><input type="checkbox" id="tunnel" ${t.enabled ? 'checked' : ''}><i></i></label>`) : ''}</div>
-        ${t.url && me.local ? `<div class="qr"><img src="/api/pair/qr?ts=${s.pairingAt}" alt="QR code to open Lookout on your phone"><b>Scan with your phone's camera</b><div class="small muted" style="text-align:center">Then sign in with your password. Scanning skips the approval step; the code works once and expires in 10 minutes.</div><div class="url mono muted">${esc(t.url)}</div><button class="small" id="copy">Copy link</button></div>
+        ${s.phoneUrl && me.local ? `<div class="qr"><img src="/api/pair/qr?ts=${s.pairingAt}" alt="QR code to open Lookout on your phone"><b>Scan with your phone's camera</b><div class="small muted" style="text-align:center">Then sign in with your password. Scanning skips the approval step; the code works once and expires in 10 minutes.</div><div class="url mono muted">${esc(s.phoneUrl)}</div><button class="small" id="copy">Copy link</button></div>
           <div class="item"><div class="grow small muted">On iPhone: in Safari tap Share → <b>Add to Home Screen</b>, open Lookout from there, then turn on notifications below.</div></div>` : ''}
         ${!me.local ? `<div class="item"><div class="grow small muted">Connected through ${esc(location.host)}</div></div>` : ''}
         ${t.error && t.status !== 'missing' ? `<div class="item small" style="color:var(--red)">${esc(t.error)}</div>` : ''}
+      </div>
+      <div class="section"><h2>When you're away</h2></div>
+      <div class="group">
+        <div class="item"><div class="grow"><b>Keep your Mac awake</b><div class="s">Agents stop when the Mac sleeps. The screen can still turn off and lock.${s.power.keepAwake === 'plugged' && !s.power.onPower ? ' <b>On battery now, so not active.</b>' : ''}</div></div></div>
+        <div class="item"><div class="seg" style="flex:1">${[['off', 'Off'], ['plugged', 'When plugged in'], ['always', 'Always']].map(([k, v]) => `<button data-awake="${k}" class="${s.power.keepAwake === k ? 'on' : ''}">${v}</button>`).join('')}</div></div>
+        <div class="item"><div class="grow"><b>Keep running with the lid closed</b><div class="s">${s.power.lidClosedOk ? '<b>On.</b> The Mac never sleeps, even closed. It gets warm in a bag and drains the battery; turn off when you travel.' : 'macOS sleeps when the lid closes, even with keep-awake on. This changes a system setting and asks for your Mac password.'}</div></div>
+          ${me.local ? `<label class="switch"><input type="checkbox" id="lid" ${s.power.lidClosedOk ? 'checked' : ''}><i></i></label>` : '<span class="small muted">On the Mac</span>'}</div>
+        <div class="item"><div class="grow"><b>Lock the screen</b><div class="s">${s.power.lockImmediate ? 'Locks right away. Agents keep running; nobody can use the Mac without your password.' : 'Turn on "Require password immediately" in System Settings → Lock Screen first.'}</div></div><button class="small" id="lock-now" ${s.power.lockImmediate ? '' : 'disabled'}>Lock now</button></div>
       </div>
       <div class="section"><h2>Notifications</h2></div>
       <div class="group"><div class="item"><div class="grow"><b>Notify this device</b><div class="s">When an agent needs your OK or finishes, and when a new device asks to sign in.</div></div>
@@ -725,9 +779,17 @@ async function settingsView() {
     if (html === shown) return;
     shown = html;
     view.innerHTML = html;
+    $('#ts')?.addEventListener('change', e => attempt(async () => { await api('/api/tailscale', { on:e.target.checked }); shown = ''; render(); }, e.target.checked ? 'Serving on your tailnet' : 'Stopped'));
+    $('#ts-open')?.addEventListener('click', () => attempt(() => api('/api/tailscale/open', {})));
+    view.querySelectorAll('[data-awake]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/power/keep-awake', { mode:b.dataset.awake }); shown = ''; render(); }, 'Saved'));
+    $('#lid')?.addEventListener('change', e => attempt(async () => {
+      try { await api('/api/power/lid', { on:e.target.checked }, { timeout:130000 }); } catch (err) { e.target.checked = !e.target.checked; throw err; }
+      shown = ''; render();
+    }, e.target.checked ? 'Will keep running with the lid closed' : 'Normal sleep restored'));
+    $('#lock-now')?.addEventListener('click', lockMac);
     $('#tunnel')?.addEventListener('change', e => attempt(async () => { await api('/api/tunnel', { on:e.target.checked }); shown = ''; setTimeout(render, 800); }));
     $('#install-cf')?.addEventListener('click', () => attempt(async () => { await api('/api/tunnel/install', {}); render(); }, 'Installing cloudflared…'));
-    $('#copy')?.addEventListener('click', () => navigator.clipboard.writeText(t.url).then(() => toast('Copied')));
+    $('#copy')?.addEventListener('click', () => navigator.clipboard.writeText(s.phoneUrl).then(() => toast('Copied')));
     $('#push')?.addEventListener('change', e => attempt(async () => { await (e.target.checked ? enablePush() : disablePush()); shown = ''; render(); }, e.target.checked ? 'Notifications on' : 'Notifications off'));
     $('#test-push')?.addEventListener('click', () => attempt(() => api('/api/push/test', {}), 'Sent'));
     $('#hook')?.addEventListener('click', () => attempt(async () => { await api('/api/approvals/hook', { install:true }); render(); }, 'Installed. Restart Claude sessions to use it.'));

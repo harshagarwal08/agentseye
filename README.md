@@ -27,7 +27,16 @@ Then on the Mac: **Settings → Use Lookout from your phone** (installs `cloudfl
 ## This Mac
 Processes (quit/force quit), Network (listening ports, exposed vs local), Startup (launch agents: start/stop), Updates (Homebrew/npm one-tap or all, macOS list), Privacy (TCC grants, revoke).
 
+## When you're away
+- **Keep awake** (Off / When plugged in / Always): Lookout holds a `caffeinate` assertion so agents keep running; the screen still turns off and locks.
+- **Lock now** (Home or Settings, also from the phone): turns the display off; with "Require password immediately" the Mac locks while agents keep working.
+- **Lid closed**: macOS always sleeps on lid close; this Mac-only switch runs `pmset -a disablesleep 1` (asks for your admin password). Warm in a bag, drains battery — turn off when travelling.
+
+## Preview dev servers
+Home → **Preview dev server** lists dev servers on the Mac (node, bun, python…) and opens one on your phone through a signed-in proxy on its own origin (port 4490), including websockets for hot reload. Over Tailscale it uses `https://<mac>.ts.net:8443`, otherwise a second Cloudflare link.
+
 ## Phone access & security
+- **Tailscale (recommended)**: `tailscale serve` gives a private, permanent `https://<mac>.<tailnet>.ts.net`, reachable only from your devices.
 - Cloudflare Quick Tunnel (URL changes on restart; Lookout follows it).
 - Password + **device approval on the Mac**; scanning the QR (single-use, 10 min) skips approval.
 - Per-device keys (hashed), sign out any device, rate-limited sign-in, push alert after 20 failures.
