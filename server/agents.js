@@ -161,16 +161,17 @@ function codexSessions(limit) {
     let id = path.basename(f.file).match(/([0-9a-f]{8}-[0-9a-f-]{27,})\.jsonl$/i)?.[1] || path.basename(f.file, '.jsonl');
     let cwd = '';
     let title = '';
+    let entrypoint = '';
     try {
       for (const entry of lines(readHead(f.file))) {
-        if (entry.type === 'session_meta') { id = entry.payload?.id || id; cwd = entry.payload?.cwd || ''; }
+        if (entry.type === 'session_meta') { id = entry.payload?.id || id; cwd = entry.payload?.cwd || ''; entrypoint = { codex_vscode:'codex-vscode', 'T3 Code':'t3' }[entry.payload?.originator] || ''; }
         if (!title && entry.type === 'response_item' && entry.payload?.type === 'message' && entry.payload.role === 'user') {
           const text = cleanTitle(textOf(entry.payload.content));
           if (text) title = text;
         }
       }
     } catch {}
-    return { harness:'codex', id, file:f.file, updatedAt:f.mtime, title:title || '(untitled)', cwd };
+    return { harness:'codex', id, file:f.file, updatedAt:f.mtime, title:title || '(untitled)', cwd, entrypoint };
   });
 }
 

@@ -6,6 +6,7 @@ import * as auth from './auth.js';
 import * as push from './push.js';
 import { usage } from './usage.js';
 import * as t3 from './t3.js';
+import * as ides from './ides.js';
 
 // Prefer the name the person gave the session; fall back to its folder.
 const label = (id, cwd) => nameOf('claude', id) || path.basename(cwd || '') || 'Claude';
@@ -39,6 +40,16 @@ export function start() {
     else if (was.status === 'busy' && now.status === 'done') push.notify({ title:`${now.title} finished`, body:now.preview || 'Tap to see the reply.', url, tag:`t3-${now.id}` });
     else if (was.status === 'busy' && now.status === 'failed') push.notify({ title:`${now.title} failed`, body:now.error || 'Tap to see what happened.', url, tag:`t3-${now.id}` });
   });
+
+  // Cursor and VS Code chats: a ping when one finishes.
+  const ideWas = new Map();
+  setInterval(async () => {
+    for (const c of await ides.list().catch(() => [])) {
+      const key = `${c.app}:${c.id}`;
+      if (ideWas.get(key) === 'busy' && c.status === 'done') push.notify({ title:`${c.title} finished`, body:`${c.app === 'cursor' ? 'Cursor' : 'VS Code'} · tap to see the reply`, url:`/#/i/${c.app}/${c.id}`, tag:`ide-${key}` });
+      ideWas.set(key, c.status);
+    }
+  }, 15000).unref();
 
   // One heads-up per limit window when it passes 90%, so you can pace work before you hit the wall.
   const warned = new Set();

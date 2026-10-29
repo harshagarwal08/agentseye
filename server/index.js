@@ -29,6 +29,7 @@ import * as watcher from './watcher.js';
 import { recentFiles, safePath, mime } from './files.js';
 import { rename } from './names.js';
 import { usage } from './usage.js';
+import * as ides from './ides.js';
 import { hookStatus, installHook, uninstallHook } from './hookinstall.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
@@ -86,9 +87,9 @@ function needsYou() {
 // (Terminal, VS Code). Sessions T3 itself runs (entrypoint sdk-ts) are already covered by their T3 thread.
 async function allAgents() {
   const local = (await agents.sessions({ limit:30 }))
-    .filter(s => s.live && s.entrypoint !== 'sdk-ts' && !(t3.status().connected && s.harness === 'codex' && !s.entrypoint))
+    .filter(s => s.live && s.entrypoint !== 'sdk-ts' && s.entrypoint !== 't3')
     .map(s => ({ ...s, source:'local' }));
-  return [...t3.threads(), ...local];
+  return [...t3.threads(), ...local, ...await ides.list().catch(() => [])];
 }
 const updateCount = () => Object.values(updates.summary().sources).reduce((n, s) => n + (s.items?.length || 0), 0);
 
@@ -96,7 +97,7 @@ async function sessionDelivery(session) {
   if (!session.live) return { delivery:'resume', tty:'' };
   const tty = session.pid ? await terminal.ttyOf(session.pid) : '';
   if (tty && await terminal.inTerminal(tty)) return { delivery:'terminal', tty };
-  const where = { 'claude-vscode':'VS Code', 'sdk-ts':'another app', cli:'another terminal app' }[session.entrypoint] || 'another app';
+  const where = { 'claude-vscode':'VS Code', 'codex-vscode':'VS Code', 'sdk-ts':'another app', cli:'another terminal app' }[session.entrypoint] || 'another app';
   return { delivery:'none', tty, note:`Open in ${where}. Send to continue in a copy in Terminal.` };
 }
 
@@ -133,6 +134,8 @@ const routes = {
     return out;
   },
   'GET /api/agents':() => agents.sessions(),
+  'GET /api/ide/thread':(_, url) => ides.thread(url.searchParams.get('app') || '', url.searchParams.get('id') || ''),
+  'POST /api/ide/open':async b => { await ides.open(String(b.app), String(b.id)); return { ok:true }; },
   'GET /api/t3/thread':(_, url) => t3.thread(url.searchParams.get('id') || ''),
   'POST /api/t3/send':async b => { const text = String(b.text || '').trim(); if (!text) throw fail('Write a message first.'); await t3.sendMessage(String(b.id), text.slice(0, 20000)); return { ok:true }; },
   'POST /api/t3/answer':async b => { await t3.answer(String(b.id), String(b.requestId), Object.fromEntries(Object.entries(b.answers || {}).map(([k, v]) => [String(k), String(v).slice(0, 4000)]))); return { ok:true }; },

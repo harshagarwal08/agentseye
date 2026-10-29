@@ -10,7 +10,7 @@ const home = p => String(p || '').replace(/^\/Users\/[^/]+/, '~');
 const base = p => String(p || '').split('/').filter(Boolean).pop() || '~';
 const pct = (a, b) => (b ? Math.round(a / b * 100) : 0);
 const level = p => (p > 90 ? 'bad' : p > 75 ? 'warn' : '');
-const harnessName = { claude:'Claude Code', codex:'Codex' };
+const harnessName = { claude:'Claude Code', codex:'Codex', cursor:'Cursor', copilot:'Copilot' };
 // What a session is called: the name you gave it, else Claude's AI title or the first prompt.
 const display = s => s.name || s.title || '(untitled)';
 const where = s => [base(s.cwd), s.branch && s.branch !== 'HEAD' ? s.branch : ''].filter(Boolean).join(' · ');
@@ -417,11 +417,11 @@ function route() {
   stop();
   closeSheet();
   const [, page, ...rest] = location.hash.split('/');
-  const tab = ['s', 't'].includes(page) ? 'home' : page || 'home';
+  const tab = ['s', 't', 'i'].includes(page) ? 'home' : page || 'home';
   document.querySelectorAll('#tabs [data-tab]').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
-  document.body.classList.toggle('in-session', ['s', 't'].includes(page));
+  document.body.classList.toggle('in-session', ['s', 't', 'i'].includes(page));
   window.scrollTo(0, 0);
-  const view = { s:() => (rest[2] === 'a' ? subagentView(rest[0], decodeURIComponent(rest[1] || ''), decodeURIComponent(rest[3] || '')) : sessionView(rest[0], decodeURIComponent(rest[1] || ''))), t:() => t3View(decodeURIComponent(rest[0] || '')), guide:guideView, new:() => { location.replace('#/'); setTimeout(newChatSheet, 600); }, lock:() => { location.replace('#/'); setTimeout(lockMac, 600); }, settings:settingsView }[page] || homeView;
+  const view = { s:() => (rest[2] === 'a' ? subagentView(rest[0], decodeURIComponent(rest[1] || ''), decodeURIComponent(rest[3] || '')) : sessionView(rest[0], decodeURIComponent(rest[1] || ''))), t:() => t3View(decodeURIComponent(rest[0] || '')), i:() => t3View(decodeURIComponent(rest[1] || ''), rest[0]), guide:guideView, new:() => { location.replace('#/'); setTimeout(newChatSheet, 600); }, lock:() => { location.replace('#/'); setTimeout(lockMac, 600); }, settings:settingsView }[page] || homeView;
   view();
   pollBadges();
   every(4000, pollBadges);
@@ -516,14 +516,14 @@ function limitsCard(limits = []) {
       : `<div class="small muted">${esc(u.note || 'Unavailable')}</div>`}</div>`).join('')}</button>`;
 }
 // Home is one clean list: what needs you, what is working, and what finished recently.
-const agentHref = a => (a.source === 't3' ? `#/t/${encodeURIComponent(a.id)}` : `#/s/${a.harness}/${encodeURIComponent(a.id)}`);
+const agentHref = a => (a.source === 't3' ? `#/t/${encodeURIComponent(a.id)}` : a.source === 'ide' ? `#/i/${a.app}/${encodeURIComponent(a.id)}` : `#/s/${a.harness}/${encodeURIComponent(a.id)}`);
 const agentState = a => (a.status === 'waiting' ? 'waiting' : a.status === 'busy' ? 'busy' : a.status === 'failed' ? 'failed' : a.live ? 'open' : 'done');
 // Text boxes grow with what you type, up to about six lines.
 const grow = ta => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; };
 
 function agentRow(a) {
   const st = agentState(a);
-  const sub = a.source === 't3' ? [a.project, a.preview && st !== 'busy' ? a.preview : ''].filter(Boolean).join(' · ') : [where(a), a.entrypoint === 'claude-vscode' ? 'VS Code' : 'Terminal'].filter(Boolean).join(' · ');
+  const sub = a.source === 't3' ? [a.project, a.preview && st !== 'busy' ? a.preview : ''].filter(Boolean).join(' · ') : [where(a), ['claude-vscode', 'codex-vscode'].includes(a.entrypoint) ? 'VS Code' : 'Terminal'].filter(Boolean).join(' · ');
   return `<a class="agent ${st}" href="${agentHref(a)}">
     <div class="avatar">${avatar(a.harness, { waiting:'waiting', busy:'busy', open:'open', done:'off', failed:'off' }[st])}</div>
     <div class="grow"><div class="t">${esc(a.name || a.title)}</div><div class="s">${esc(sub || harnessName[a.harness])}</div></div>
@@ -611,8 +611,8 @@ async function newChatSheet(d) {
 
 // ---------- T3 Code chat ----------
 // Messages go through T3, so they appear in the desktop app too. While the agent works the box is disabled;
-// when it asks a question, its options show as buttons.
-async function t3View(id) {
+// when it asks a question, its options show as buttons. Cursor and VS Code chats use the same screen, read only.
+async function t3View(id, app = '') {
   const view = $('#view');
   view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar"></div><div class="grow title-btn"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></div><span id="s-chip"></span></div></header>
     <div class="pane" id="pane"></div><div class="foot" id="foot"></div></div>`;
@@ -650,6 +650,11 @@ async function t3View(id) {
     if (foot.dataset.key === key) return;
     foot.dataset.key = key;
     const keep = $('#reply')?.value || '';
+    if (info.readOnly) {
+      foot.innerHTML = `<div class="busybar"><span class="small muted">${esc(info.note)}</span><button class="small" id="open-mac">Open on Mac</button></div>`;
+      $('#open-mac').onclick = () => attempt(() => api('/api/ide/open', { app, id }), 'Opened on your Mac');
+      return;
+    }
     if (q) {
       foot.innerHTML = `<div class="question">${q.questions.length ? q.questions.map(x => `<div class="q" data-q="${esc(x.id)}"><div class="small muted">${esc(x.header || 'Question')}</div><b>${esc(x.question)}</b>
         <div class="opts">${x.options.map(o => `<button data-opt="${esc(o)}">${esc(o)}</button>`).join('')}</div></div>`).join('') : '<b>The agent is waiting for you.</b>'}
@@ -695,10 +700,10 @@ async function t3View(id) {
     paint(false);
     setTimeout(() => draw(false).catch(() => {}), 1200);
   };
-  const draw = async first => { info = await api(`/api/t3/thread?id=${encodeURIComponent(id)}`); paint(first); };
+  const draw = async first => { info = await api(app ? `/api/ide/thread?app=${app}&id=${encodeURIComponent(id)}` : `/api/t3/thread?id=${encodeURIComponent(id)}`); paint(first); };
   pane.innerHTML = skeleton(5, 'bubble');
   await draw(true).catch(e => sessionError(pane, e, () => draw(true)));
-  every(2500, () => draw(false).catch(() => {}));
+  every(app ? 5000 : 2500, () => draw(false).catch(() => {}));
 }
 
 function statusChip(s) {

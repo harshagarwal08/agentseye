@@ -1,5 +1,5 @@
 // Pixel mascots drawn from character grids: one per harness, with a prop for its mood.
-const palette = { O:'#d97757', o:'#b85f43', K:'#2b2620', D:'#3b3f46', d:'#2a2d33', T:'#7dd3c0', A:'#9aa0a8', W:'#fffdf8', R:'#c0443a', L:'#8a8f98', S:'#c9c2b4', C:'#7a5a3a', Y:'#f2c46d' };
+const palette = { O:'#d97757', o:'#b85f43', K:'#2b2620', D:'#3b3f46', d:'#2a2d33', T:'#7dd3c0', A:'#9aa0a8', W:'#fffdf8', R:'#c0443a', L:'#8a8f98', S:'#c9c2b4', C:'#7a5a3a', Y:'#f2c46d', P:'#8957e5', p:'#6e40c9', G:'#e9e6df' };
 
 const bodies = {
   claude:[
@@ -25,6 +25,30 @@ const bodies = {
     '...DDDDDDDDDD...',
     '....D......D....',
     '....D......D....',
+  ],
+  cursor:[
+    '................',
+    '......KKKK......',
+    '....KKKKKKKK....',
+    '..KKKKKKKKKKKK..',
+    '..KdGGKKKKGGdK..',
+    '..KdGGKKKKGGdK..',
+    '..KKKKKKKKKKKK..',
+    '....KKKKKKKK....',
+    '.....K....K.....',
+    '.....K....K.....',
+  ],
+  copilot:[
+    '................',
+    '...PPPPPPPPPP...',
+    '..PPPPPPPPPPPP..',
+    '..PGGGGPPGGGGP..',
+    '..PGKKGPPGKKGP..',
+    '..PGGGGPPGGGGP..',
+    '..PppppppppppP..',
+    '...PPPPPPPPPP...',
+    '....P......P....',
+    '....P......P....',
   ],
 };
 const props = {
