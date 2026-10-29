@@ -227,6 +227,8 @@ async function gate() {
     try {
       await api(setup ? '/api/auth/setup' : '/api/auth/login', { password:$('#pw').value, pair:pairCode() });
       sessionStorage.removeItem('pair');
+      // A new password is a fresh start: show the start guide and the install tip again.
+      if (setup) ['guide-hidden', 'install-hidden'].forEach(k => localStorage.removeItem(k));
       gate();
     } catch (err) { $('#err').textContent = err.message; btn.classList.remove('busy'); btn.disabled = false; }
   };
