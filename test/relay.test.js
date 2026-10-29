@@ -61,12 +61,20 @@ test('the Mac connects out to the relay', async () => {
 test('the phone opens the app through the relay; private API calls must be sealed', async () => {
   const pair = await phone(`/m/${macId}`);
   assert.equal(pair.status, 302);
+  assert.equal(pair.headers.get('location'), `/?mac=${macId}`);
   assert.equal(jar.agentseye_mac, macId);
+  // The address bar link, pasted into a different browser (no cookie), still finds this Mac.
+  const other = await fetch(`${R}/?mac=${macId}`, { redirect:'manual' });
+  assert.equal(other.headers.get('location'), `/m/${macId}`);
+  const back = await fetch(R + other.headers.get('location'), { redirect:'manual' });
+  assert.equal(back.headers.get('location'), `/?mac=${macId}`);
+  assert.match(back.headers.get('set-cookie'), new RegExp(`agentseye_mac=${macId}`));
   assert.match(await (await phone('/')).text(), /<title>AgentsEye<\/title>/);
   const manifest = await (await phone('/manifest.webmanifest')).json();
   assert.equal(manifest.start_url, `/m/${macId}/?source=homescreen`);
   const info = await (await phone('/relay-info')).json();
   assert.equal(info.relay, true);
+  assert.equal(info.macId, macId);
   assert.equal((await phone('/api/home')).status, 403);
   assert.equal((await phone('/api/auth/state')).status, 403);
   key = await e2e.importKey(await e2e.deriveKeyBytes(PASSWORD, info.salt, info.iterations));

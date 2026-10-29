@@ -341,7 +341,7 @@ function installSheet() {
     <p class="small muted">It opens full screen like an app, and it is the only way iPhone allows notifications.</p>` : `
     <ol class="steps"><li>Open your browser's <b>⋮</b> menu.</li><li>Tap <b>Install app</b> or <b>Add to Home screen</b>.</li></ol>`}
     <button class="ghost" data-close>Done</button>`, card => {
-    card.querySelector('#copy-url')?.addEventListener('click', () => navigator.clipboard.writeText(location.origin).then(() => toast('Copied. Paste it into Safari.')));
+    card.querySelector('#copy-url')?.addEventListener('click', () => navigator.clipboard.writeText(relay.on && relay.info.macId ? `${location.origin}/m/${relay.info.macId}` : location.href.split('#')[0]).then(() => toast('Copied. Paste it into Safari.')));
   });
 }
 

@@ -180,12 +180,24 @@ export function route(request, { repo = '' } = {}) {
   if (url.pathname === '/install.sh') return { response:new Response(installScript({ relay:url.origin, repo }), { headers:{ 'content-type':'text/x-shellscript; charset=utf-8', 'cache-control':'no-cache' } }) };
   if (url.pathname === '/privacy') return { response:new Response(privacy, { headers:{ 'content-type':'text/html; charset=utf-8' } }) };
   if (url.pathname === '/icon.svg' && !/agentseye_mac=/.test(request.headers.get('cookie') || '')) return { response:new Response(ICON, { headers:{ 'content-type':'image/svg+xml', 'cache-control':'max-age=86400' } }) };
+  // /m/<id> remembers the Mac in a cookie and lands on /?mac=<id>, so the address bar always names the Mac:
+  // copying it into another browser (Chrome → Safari on iPhone) still opens the same Mac.
   const m = url.pathname.match(/^\/m\/([a-z2-7]{16})\/?$/);
   if (m) {
     const secure = url.protocol === 'https:' ? '; Secure' : '';
-    return { response:new Response(null, { status:302, headers:{ location:`/${url.search}`, 'set-cookie':`agentseye_mac=${m[1]}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${secure}`, 'cache-control':'no-store' } }) };
+    const next = new URLSearchParams(url.search);
+    next.set('mac', m[1]);
+    return { response:new Response(null, { status:302, headers:{ location:`/?${next}`, 'set-cookie':`agentseye_mac=${m[1]}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${secure}`, 'cache-control':'no-store' } }) };
   }
-  const macId = (request.headers.get('cookie') || '').match(/(?:^|;\s*)agentseye_mac=([a-z2-7]{16})/)?.[1];
+  const cookieMac = (request.headers.get('cookie') || '').match(/(?:^|;\s*)agentseye_mac=([a-z2-7]{16})/)?.[1];
+  const queryMac = url.searchParams.get('mac');
+  // A pasted ?mac= link in a browser without the cookie: set it once via /m/<id>, then carry on.
+  if (queryMac && /^[a-z2-7]{16}$/.test(queryMac) && queryMac !== cookieMac && url.pathname === '/') {
+    const rest = new URLSearchParams(url.search);
+    rest.delete('mac');
+    return { response:new Response(null, { status:302, headers:{ location:`/m/${queryMac}${rest.size ? `?${rest}` : ''}`, 'cache-control':'no-store' } }) };
+  }
+  const macId = cookieMac;
   if (!macId) return { response:new Response(landing(url.origin, repo), { status:200, headers:{ 'content-type':'text/html; charset=utf-8' } }) };
   return { macId };
 }

@@ -412,7 +412,7 @@ export function createServer() {
       const relayed = viaRelay(req);
       if (!relayed && !unwrapped(req) && !hostAllowed(req)) throw fail('Bad host', 421);
       const url = new URL(req.url, 'http://localhost');
-      if (url.pathname === '/relay-info') return send(res, 200, relayed ? { relay:true, ...(auth.relayKeyInfo() ? { salt:auth.relayKeyInfo().salt, iterations:auth.relayKeyInfo().iterations } : { unavailable:true }) } : { relay:false });
+      if (url.pathname === '/relay-info') return send(res, 200, relayed ? { relay:true, macId:req.headers['x-agentseye-relay-mac'] || '', ...(auth.relayKeyInfo() ? { salt:auth.relayKeyInfo().salt, iterations:auth.relayKeyInfo().iterations } : { unavailable:true }) } : { relay:false });
       // Through a relay only the app's public files and sealed envelopes pass; everything private is inside them.
       if (relayed && url.pathname !== '/api/e2e' && (url.pathname.startsWith('/api/') || url.pathname.startsWith('/hook/'))) throw fail('Use the encrypted channel.', 403);
       if (url.pathname === '/api/e2e' && req.method === 'POST') return await handleEnvelope(req, res);
