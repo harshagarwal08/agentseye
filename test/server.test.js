@@ -137,9 +137,9 @@ test('sessions: home list, chat with file buttons, files tab, safe downloads', a
     { type:'user', cwd:project, message:{ content:'make a screenshot' } },
     { type:'assistant', message:{ content:[{ type:'text', text:'Saved **shot.png**.' }] } },
   ].map(JSON.stringify).join('\n'));
-  const homeData = (await call('/api/home', undefined, { cookie:mac })).body;
-  assert.equal(homeData.sessions.find(s => s.id === id).title, 'Demo task');
-  assert.deepEqual(homeData.projects, [project]);
+  const list = (await call('/api/agents', undefined, { cookie:mac })).body;
+  assert.equal(list.find(s => s.id === id).title, 'Demo task');
+  assert.ok(Array.isArray((await call('/api/home', undefined, { cookie:mac })).body.agents));
   const chat = (await call(`/api/session?harness=claude&id=${id}&view=chat`, undefined, { cookie:mac })).body;
   assert.equal(chat.delivery, 'resume');
   assert.deepEqual(chat.messages.at(-1).files, ['shot.png']);
@@ -162,8 +162,8 @@ test('subagents are listed per session with status, and their transcripts are re
   ].map(JSON.stringify).join('\n'));
   fs.writeFileSync(path.join(dir, 'agent-abc123.meta.json'), JSON.stringify({ agentType:'code-review', description:'Login review' }));
   fs.writeFileSync(path.join(dir, 'agent-def456.jsonl'), JSON.stringify({ type:'user', isSidechain:true, message:{ content:'Scan backend' } }));
-  const home_ = (await call('/api/home', undefined, { cookie:mac })).body;
-  assert.deepEqual(home_.sessions.find(s => s.id === id).subagents, { total:2, running:0 });
+  const list = (await call('/api/agents', undefined, { cookie:mac })).body;
+  assert.deepEqual(list.find(s => s.id === id).subagents, { total:2, running:0 });
   const helpers = (await call(`/api/session?harness=claude&id=${id}&view=helpers`, undefined, { cookie:mac })).body.helpers;
   const review = helpers.find(h => h.id === 'abc123');
   assert.deepEqual([review.type, review.task, review.status, review.lastText], ['code-review', 'Login review', 'done', 'Found 2 issues.']);
@@ -177,10 +177,10 @@ test('subagents are listed per session with status, and their transcripts are re
 test('sessions can be renamed, and the name shows everywhere', async () => {
   const id = '11111111-2222-3333-4444-555555555555';
   assert.equal((await call('/api/session/rename', { harness:'claude', id, name:'  Login   fixes ' }, { cookie:mac })).body.name, 'Login fixes');
-  assert.equal((await call('/api/home', undefined, { cookie:mac })).body.sessions.find(s => s.id === id).name, 'Login fixes');
+  assert.equal((await call('/api/agents', undefined, { cookie:mac })).body.find(s => s.id === id).name, 'Login fixes');
   assert.equal((await call(`/api/session?harness=claude&id=${id}&view=chat`, undefined, { cookie:mac })).body.session.name, 'Login fixes');
   await call('/api/session/rename', { harness:'claude', id, name:'' }, { cookie:mac });
-  assert.equal((await call('/api/home', undefined, { cookie:mac })).body.sessions.find(s => s.id === id).name, '');
+  assert.equal((await call('/api/agents', undefined, { cookie:mac })).body.find(s => s.id === id).name, '');
 });
 
 test('stopping refuses sessions that are not running', async () => {

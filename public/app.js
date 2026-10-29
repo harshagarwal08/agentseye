@@ -417,11 +417,11 @@ function route() {
   stop();
   closeSheet();
   const [, page, ...rest] = location.hash.split('/');
-  const tab = page === 's' ? 'home' : page || 'home';
+  const tab = ['s', 't'].includes(page) ? 'home' : page || 'home';
   document.querySelectorAll('#tabs [data-tab]').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
-  document.body.classList.toggle('in-session', page === 's');
+  document.body.classList.toggle('in-session', ['s', 't'].includes(page));
   window.scrollTo(0, 0);
-  const view = { s:() => (rest[2] === 'a' ? subagentView(rest[0], decodeURIComponent(rest[1] || ''), decodeURIComponent(rest[3] || '')) : sessionView(rest[0], decodeURIComponent(rest[1] || ''))), system:() => systemView(rest[0] || 'processes'), guide:guideView, new:() => { location.replace('#/'); setTimeout(() => $('#draft')?.focus(), 600); }, lock:() => { location.replace('#/'); setTimeout(lockMac, 600); }, settings:settingsView }[page] || homeView;
+  const view = { s:() => (rest[2] === 'a' ? subagentView(rest[0], decodeURIComponent(rest[1] || ''), decodeURIComponent(rest[3] || '')) : sessionView(rest[0], decodeURIComponent(rest[1] || ''))), t:() => t3View(decodeURIComponent(rest[0] || '')), guide:guideView, new:() => { location.replace('#/'); setTimeout(newChatSheet, 600); }, lock:() => { location.replace('#/'); setTimeout(lockMac, 600); }, settings:settingsView }[page] || homeView;
   view();
   pollBadges();
   every(4000, pollBadges);
@@ -431,7 +431,6 @@ async function pollBadges() {
   const b = await api('/api/badges').catch(() => null);
   if (!b) return;
   $('#pip-home').textContent = b.needsYou || '';
-  $('#pip-system').textContent = b.updates || '';
   $('#pip-settings').textContent = b.devicesWaiting || '';
   document.title = b.needsYou ? `(${b.needsYou}) AgentsEye` : 'AgentsEye';
 }
@@ -505,31 +504,6 @@ async function lockMac() {
   attempt(() => api('/api/power/lock', {}), 'Mac locked');
 }
 
-// Lists dev servers found on the Mac and opens the chosen one in a new tab through the signed-in preview proxy.
-async function previewSheet() {
-  if (relay.on) return sheet('<h3>Preview a dev server</h3><p class="small muted">Previews need a direct link to your Mac (Tailscale or Cloudflare). They are not available through the relay yet.</p><button class="ghost" data-close>OK</button>');
-  sheet(`<h3>Preview a dev server</h3>${skeleton(3)}`);
-  let d;
-  try { d = await api('/api/preview'); } catch (e) { sheet(`<h3>Preview a dev server</h3>${errorPanel(e)}`, card => { card.querySelector('[data-retry]').onclick = previewSheet; }); return; }
-  sheet(`<h3>Preview a dev server</h3><p class="small muted">Opens the app running on your Mac in a new tab, with live reload. Only your signed-in devices can see it.</p>
-    ${d.servers.length ? `<div class="list">${d.servers.map(v => `<button class="row" data-port="${v.port}" style="text-align:left"><div class="metric" style="text-align:left;min-width:64px">:${v.port}</div><div class="grow"><div class="t">${esc(v.command)}</div><div class="s">localhost:${v.port}${d.port === v.port ? ' · open now' : ''}</div></div><span class="chev">›</span></button>`).join('')}</div>` : '<div class="empty">No dev servers are running. Start one (npm run dev…) or type a port.</div>'}
-    <div class="row" style="background:none;padding:0"><input id="pv-port" inputmode="numeric" placeholder="Other port, e.g. 5173"><button class="primary" id="pv-go">Open</button></div>
-    ${d.port ? '<button class="ghost" id="pv-stop">Stop previewing</button>' : ''}<button class="ghost" data-close>Close</button>`, card => {
-    const go = port => {
-      // Open the tab now, inside the tap, so phones don't block it as a pop-up; fill in the address once known.
-      const tab = window.open('', '_blank');
-      attempt(async () => {
-        const r = await api('/api/preview/open', { port });
-        if (tab) tab.location = r.url; else location.href = r.url;
-        closeSheet();
-      }).then(r => { if (tab && tab.location.href === 'about:blank') tab.close(); });
-    };
-    card.querySelectorAll('[data-port]').forEach(b => b.onclick = () => go(Number(b.dataset.port)));
-    card.querySelector('#pv-go').onclick = () => go(Number(card.querySelector('#pv-port').value));
-    card.querySelector('#pv-stop')?.addEventListener('click', () => attempt(async () => { await api('/api/preview/stop', {}); closeSheet(); }, 'Preview stopped'));
-  });
-}
-
 // ---------- Limits ----------
 const until = t => { if (!t) return ''; const m = Math.max(0, Math.round((t - Date.now()) / 60000)); if (m < 60) return `${m}m`; const h = Math.floor(m / 60); if (h < 48) return `${h}h ${m % 60}m`; return `${Math.round(h / 24)}d`; };
 const planName = p => String(p || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -541,109 +515,192 @@ function limitsCard(limits = []) {
     ${u.state === 'ok' ? `<div class="bars">${u.windows.map(w => `<div class="lbar"><div class="lbar-top"><span>${esc(w.label)}</span><b class="${w.percent >= 90 ? 'hot' : ''}">${w.percent}%</b></div><div class="meter ${level(w.percent)}"><i style="width:${Math.min(100, w.percent)}%"></i></div><div class="small muted">${w.resetsAt ? `resets in ${until(w.resetsAt)}` : ''}</div></div>`).join('')}</div>`
       : `<div class="small muted">${esc(u.note || 'Unavailable')}</div>`}</div>`).join('')}</button>`;
 }
+// Home is one clean list: what needs you, what is working, and what finished recently.
+const agentHref = a => (a.source === 't3' ? `#/t/${encodeURIComponent(a.id)}` : `#/s/${a.harness}/${encodeURIComponent(a.id)}`);
+const agentState = a => (a.status === 'waiting' ? 'waiting' : a.status === 'busy' ? 'busy' : a.status === 'failed' ? 'failed' : a.live ? 'open' : 'done');
+// Text boxes grow with what you type, up to about six lines.
+const grow = ta => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; };
+
+function agentRow(a) {
+  const st = agentState(a);
+  const sub = a.source === 't3' ? [a.project, a.preview && st !== 'busy' ? a.preview : ''].filter(Boolean).join(' · ') : [where(a), a.entrypoint === 'claude-vscode' ? 'VS Code' : 'Terminal'].filter(Boolean).join(' · ');
+  return `<a class="agent ${st}" href="${agentHref(a)}">
+    <div class="avatar">${avatar(a.harness, { waiting:'waiting', busy:'busy', open:'open', done:'off', failed:'off' }[st])}</div>
+    <div class="grow"><div class="t">${esc(a.name || a.title)}</div><div class="s">${esc(sub || harnessName[a.harness])}</div></div>
+    <div class="side">${{ waiting:'<span class="chip amber">Needs you</span>', busy:'<span class="chip blue"><span class="spin"></span>Working</span>', failed:'<span class="chip red">Failed</span>' }[st] || ''}<span class="when">${ago(a.updatedAt)}</span></div></a>`;
+}
+
 async function homeView() {
   const view = $('#view');
   view.innerHTML = '<div class="home"></div>';
   const box = view.querySelector('.home');
   let shown = '';
   let showAll = false;
+  let data = null;
   const render = async () => {
-    const d = await api('/api/home');
-    const rank = { waiting:0, busy:1 };
-    const live = d.sessions.filter(s => s.live).sort((a, b) => (rank[a.status] ?? 2) - (rank[b.status] ?? 2) || b.updatedAt - a.updatedAt);
-    const recent = d.sessions.filter(s => !s.live).slice(0, 6);
-    const waiting = live.filter(s => s.status === 'waiting' && !d.approvals.some(a => a.sessionId === s.id));
-    const st = d.stats;
-    const mem = pct(st.memory.used, st.memory.total);
-    const disk = st.disk ? pct(st.disk.used, st.disk.total) : 0;
-    const cpu = Math.min(100, Math.round(st.load[0] / st.cpus * 100));
+    const d = data = await api('/api/home');
+    const groups = { waiting:[], busy:[], recent:[] };
+    for (const a of d.agents) groups[a.status === 'waiting' ? 'waiting' : a.status === 'busy' ? 'busy' : 'recent'].push(a);
+    const recent = groups.recent.sort((x, y) => y.updatedAt - x.updatedAt);
+    const section = (title, list, extra = '') => (list.length ? `<div class="section"><h2>${title}<span class="count">${list.length}</span></h2>${extra}</div><div class="agents">${list.map(agentRow).join('')}</div>` : '');
     const html = `
-      <div class="top"><h1>AgentsEye</h1><span class="mac"><span class="dot green"></span>${esc(st.host.replace(/\.local$/, ''))}</span></div>
-      ${isPhone && !standalone() && !localStorage.getItem('install-hidden') ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Get the AgentsEye app</b><div class="small muted">Open it from your Home Screen, full screen, with notifications.</div></div><button class="small primary" id="install">Add</button><button class="ghost small" id="install-x" aria-label="Dismiss">✕</button></div>' : ''}
+      <div class="top"><h1>Agents</h1><span class="mac"><span class="dot green"></span>${esc(d.host)}</span></div>
+      ${isPhone && !standalone() && !localStorage.getItem('install-hidden') ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Get the app</b><div class="small muted">Add to your Home Screen for full screen and notifications.</div></div><button class="small primary" id="install">Add</button><button class="ghost small" id="install-x" aria-label="Dismiss">✕</button></div>' : ''}
       ${guideCard()}
-      ${limitsCard(d.limits)}
       ${d.devicesWaiting.map(dev => `<div class="banner"><div class="grow"><b>${esc(dev.name)}</b> wants to sign in<div class="small muted">${ago(dev.createdAt)}${me.local ? '' : ' · approve it on the Mac'}</div></div>${me.local ? `<button class="good small" data-approve="${dev.id}">Approve</button><button class="ghost small" data-reject="${dev.id}">✕</button>` : ''}</div>`).join('')}
-      ${d.approvals.length || waiting.length ? `<div class="section"><h2>Needs you<span class="count">${d.approvals.length + waiting.length}</span></h2></div><div class="list">
-        ${d.approvals.map(approvalCard).join('')}
-        ${waiting.map(s => `<a class="row" href="#/s/${s.harness}/${s.id}"><div class="avatar">${avatar(s.harness, 'waiting')}</div><div class="grow"><div class="t">${esc(display(s))}</div><div class="s">${esc(where(s))}</div></div><span class="chip amber">Answer ›</span></a>`).join('')}
-      </div>` : ''}
-      <div class="section"><h2>Live sessions<span class="count">${live.length}</span></h2></div>
-      ${live.length ? `<div class="live">${live.slice(0, showAll ? 99 : 6).map(s => `
-        <a href="#/s/${s.harness}/${s.id}" class="${s.status === 'waiting' ? 'waiting' : ''}">
-          <span class="harness">${esc(harnessName[s.harness] || s.harness)}</span>
-          <div class="avatar big">${avatar(s.harness, s.status)}</div>
-          <div><div class="name">${esc(display(s))}</div><div class="what">${esc(where(s))}</div></div>
-          <div class="chips">${statusChip(s)}${helpersChip(s)}</div>
-        </a>`).join('')}</div>${live.length > 6 ? `<button class="more" id="more">${showAll ? 'Show fewer' : `Show all ${live.length}`}</button>` : ''}` : '<div class="empty">No agents running. Start one below.</div>'}
-      ${recent.length ? `<div class="section"><h2>Pick up where you left off</h2></div><div class="list">${recent.map(s => `
-        <a class="row" href="#/s/${s.harness}/${s.id}"><div class="avatar">${avatar(s.harness, 'off')}</div><div class="grow"><div class="t">${esc(display(s))}</div><div class="s">${esc(where(s))} · ${ago(s.updatedAt)}${s.subagents?.total ? ` · ${s.subagents.total} helpers` : ''}</div></div><span class="chev">›</span></a>`).join('')}</div>` : ''}
-      <div class="section"><h2>This Mac</h2><a href="#/system" class="small muted">More ›</a></div>
-      <div class="glance">
-        ${glance('#/system/processes', 'CPU', `${cpu}%`, cpu)}
-        ${glance('#/system/processes', 'Memory', `${mem}%`, mem)}
-        ${glance('#/system/ports', 'Disk free', bytes(st.disk?.free), disk)}
-        ${glance('#/system/updates', 'Updates', d.updates, null)}
-      </div>
-      <div class="actions-row"><button id="qa-preview">🌐 Preview dev server</button><button id="qa-lock">🔒 Lock Mac</button></div>
-      <div id="composer-slot"></div>`;
+      ${d.approvals.length ? `<div class="section"><h2>Permission requests<span class="count">${d.approvals.length}</span></h2></div><div class="list">${d.approvals.map(approvalCard).join('')}</div>` : ''}
+      ${section('Needs you', groups.waiting)}
+      ${section('Working', groups.busy)}
+      ${recent.length ? `<div class="section"><h2>Recent</h2></div><div class="agents">${recent.slice(0, showAll ? 60 : 8).map(agentRow).join('')}</div>${recent.length > 8 ? `<button class="more" id="more">${showAll ? 'Show less' : `Show ${recent.length - 8} more`}</button>` : ''}` : ''}
+      ${!d.agents.length ? `<div class="empty-state"><div class="big">👀</div><b>No agents yet</b><div class="small muted">${d.t3.connected ? 'Start a chat with the + button.' : 'Start Claude Code or Codex on your Mac and it shows up here.'}</div></div>` : ''}
+      ${!d.t3.connected && d.t3.installed ? `<div class="small muted center">T3 Code isn't running, so its chats aren't shown.</div>` : ''}
+      ${limitsCard(d.limits)}`;
     if (html === shown) return;
     shown = html;
-    const keep = $('#draft')?.value;
     box.innerHTML = html;
-    composer(d.projects, keep, render);
     bindApprovals(box, render);
-    $('#more')?.addEventListener('click', () => { showAll = !showAll; render(); });
-    $('#qa-lock').onclick = lockMac;
+    $('#more')?.addEventListener('click', () => { showAll = !showAll; shown = ''; render(); });
+    $('#limits')?.addEventListener('click', () => attempt(async () => { await api('/api/usage?force=1'); shown = ''; render(); }, 'Refreshed'));
     $('#install')?.addEventListener('click', installSheet);
     $('#install-x')?.addEventListener('click', () => { localStorage.setItem('install-hidden', '1'); shown = ''; render(); });
-    $('#qa-preview').onclick = previewSheet;
-    $('#limits')?.addEventListener('click', () => attempt(async () => { await api('/api/usage?force=1'); shown = ''; render(); }, 'Refreshed'));
     box.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/approve', { id:b.dataset.approve }); render(); }, 'Device approved'));
     box.querySelectorAll('[data-reject]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/remove', { id:b.dataset.reject }); render(); }));
   };
+  view.insertAdjacentHTML('beforeend', '<button class="fab" id="fab" aria-label="New chat">＋</button>');
+  $('#fab').onclick = () => newChatSheet(data);
   loadSetup().then(() => { shown = ''; return render(); }).catch(() => {});
   every(30000, () => loadSetup().catch(() => {}));
   await firstLoad(box, render, skeletonHome());
   every(4000, () => render().catch(() => {}));
 }
 
-function composer(projects, keep, after) {
-  $('#composer-slot').outerHTML = `<form class="composer" id="composer">
-    <textarea id="draft" rows="1" placeholder="Ask an agent to do something…"></textarea>
-    <div class="bar"><button type="button" class="pick" id="pick-harness">${esc(harnessName[draft.harness])}</button><button type="button" class="pick" id="pick-cwd">📁 ${esc(draft.cwd ? base(draft.cwd) : 'Project')}</button><button type="button" class="pick" id="pick-opts">${esc(optsLabel())}</button><span class="grow"></span><button class="send" type="submit" aria-label="Start">↑</button></div>
-  </form>`;
-  const ta = $('#draft');
-  ta.value = keep ?? draft.text;
-  ta.oninput = () => { draft.text = ta.value; grow(ta); };
-  grow(ta);
-  const setCwd = cwd => { draft.cwd = cwd; localStorage.setItem('cwd', cwd); $('#pick-cwd').textContent = `📁 ${base(cwd)}`; };
-  $('#pick-harness').onclick = () => sheet(`<h3>Which agent?</h3>${Object.entries(harnessName).map(([k, v]) => `<button data-h="${k}" class="row" style="text-align:left"><div class="avatar">${avatar(k, 'open')}</div><div class="grow t">${v}</div>${k === draft.harness ? '✓' : ''}</button>`).join('')}`, card => card.querySelectorAll('[data-h]').forEach(b => b.onclick = () => {
-    draft.harness = b.dataset.h;
-    localStorage.setItem('harness', draft.harness);
-    $('#pick-harness').textContent = harnessName[draft.harness];
-    draft.model = 'default';
-    $('#pick-opts').textContent = optsLabel();
-    closeSheet();
-  }));
-  $('#pick-opts').onclick = () => optionsSheet(() => { $('#pick-opts').textContent = optsLabel(); });
-  $('#pick-cwd').onclick = () => pickProject(projects, setCwd);
-  $('#composer').onsubmit = e => {
-    e.preventDefault();
-    if (!draft.cwd) return pickProject(projects, setCwd);
-    attempt(async () => {
-      const name = draft.name;
-      const started = await api('/api/agents/start', { harness:draft.harness, cwd:draft.cwd, prompt:ta.value, model:draft.model, skipPermissions:draft.skip, name });
-      draft.text = '';
-      draft.name = '';
+// New chats start in T3 Code when it is running, so they show up in the desktop app; otherwise in Terminal.
+async function newChatSheet(d) {
+  d = d || await api('/api/home').catch(() => null);
+  if (!d) return;
+  const viaT3 = d.t3.connected && d.t3Projects.length;
+  const projects = viaT3 ? d.t3Projects : [];
+  const last = localStorage.getItem('t3-project');
+  sheet(`<h3>New chat</h3>
+    <div class="seg" id="nc-h">${Object.entries(harnessName).map(([k, v]) => `<button data-h="${k}" class="${k === draft.harness ? 'on' : ''}">${v}</button>`).join('')}</div>
+    ${viaT3 ? `<select id="nc-p">${projects.map(p => `<option value="${esc(p.id)}" ${p.id === last ? 'selected' : ''}>${esc(p.title)} — ${esc(home(p.cwd))}</option>`).join('')}</select>`
+      : `<input id="nc-cwd" placeholder="Folder, e.g. ~/code/app" value="${esc(draft.cwd)}" autocapitalize="off" autocorrect="off">`}
+    <textarea id="nc-text" rows="4" placeholder="What should the agent do?"></textarea>
+    <button class="primary" id="nc-go">Start</button>
+    <div class="small muted center">${viaT3 ? 'Starts in T3 Code, so it also appears on your Mac.' : 'Opens in a Terminal window on your Mac.'}</div>`, card => {
+    card.querySelectorAll('[data-h]').forEach(b => b.onclick = () => { draft.harness = b.dataset.h; localStorage.setItem('harness', draft.harness); card.querySelectorAll('[data-h]').forEach(x => x.classList.toggle('on', x === b)); });
+    card.querySelector('#nc-text').focus();
+    card.querySelector('#nc-go').onclick = () => attempt(async () => {
+      const text = card.querySelector('#nc-text').value.trim();
+      if (!text) throw new Error('Write what the agent should do.');
+      if (viaT3) {
+        const projectId = card.querySelector('#nc-p').value;
+        localStorage.setItem('t3-project', projectId);
+        const r = await api('/api/t3/create', { projectId, text, harness:draft.harness });
+        closeSheet();
+        location.hash = `#/t/${encodeURIComponent(r.id)}`;
+      } else {
+        draft.cwd = card.querySelector('#nc-cwd').value.trim();
+        localStorage.setItem('cwd', draft.cwd);
+        const started = await api('/api/agents/start', { harness:draft.harness, cwd:draft.cwd, prompt:text });
+        openWhenReady(started, '');
+      }
+    });
+  });
+}
+
+// ---------- T3 Code chat ----------
+// Messages go through T3, so they appear in the desktop app too. While the agent works the box is disabled;
+// when it asks a question, its options show as buttons.
+async function t3View(id) {
+  const view = $('#view');
+  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar"></div><div class="grow title-btn"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></div><span id="s-chip"></span></div></header>
+    <div class="pane" id="pane"></div><div class="foot" id="foot"></div></div>`;
+  $('#back').onclick = () => { location.hash = '#/'; };
+  const pane = $('#pane');
+  const foot = $('#foot');
+  let info = null;
+  let lastPane = '';
+  let outbox = [];
+  const paint = first => {
+    const s = info.session;
+    const st = agentState(s);
+    $('#s-title').textContent = s.title;
+    $('#s-sub').textContent = [s.project, s.model].filter(Boolean).join(' · ');
+    $('#s-avatar').innerHTML = avatar(s.harness, { waiting:'waiting', busy:'busy' }[st] || 'open');
+    $('#s-chip').innerHTML = { waiting:'<span class="chip amber">Needs you</span>', busy:'<span class="chip blue"><span class="spin"></span>Working</span>', failed:'<span class="chip red">Failed</span>' }[st] || '<span class="chip green">Ready</span>';
+    const said = new Set(info.messages.filter(m => m.role === 'user').map(m => m.text.trim()));
+    outbox = outbox.filter(o => o.state !== 'sent' || !said.has(o.text));
+    const html = (info.messages.map(m => `<div class="msg ${m.role}">${m.role === 'assistant' ? markdown(m.text) : esc(m.text).replace(/\n/g, '<br>')}<div class="when">${ago(m.time)}</div></div>`).join('') || (outbox.length ? '' : '<div class="empty">No messages yet.</div>'))
+      + outbox.map((o, i) => `<div class="msg user pending ${o.state}">${esc(o.text).replace(/\n/g, '<br>')}<div class="when">${{ sending:'<span class="spin"></span> Sending…', sent:'✓ Sent', failed:`Not sent: ${esc(o.error)} · <button class="linkish" data-resend="${i}">Retry</button>` }[o.state]}</div></div>`).join('')
+      + (st === 'busy' ? `<div class="typing"><span class="spin"></span> ${esc(info.activity ? `Working · ${info.activity}` : 'Working…')}</div>` : '')
+      + (s.error && st === 'failed' ? `<div class="msg system">⚠️ ${esc(s.error)}</div>` : '');
+    if (html !== lastPane) {
+      const atEnd = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 140;
+      pane.innerHTML = html;
+      lastPane = html;
+      if (first || atEnd || outbox.length) pane.scrollTop = pane.scrollHeight;
+      pane.querySelectorAll('[data-resend]').forEach(b => b.onclick = () => { const o = outbox.splice(Number(b.dataset.resend), 1)[0]; send(o.text); });
+    }
+    paintFoot(st);
+  };
+  const paintFoot = st => {
+    const q = info.question;
+    const key = `${st}|${q?.id || ''}`;
+    if (foot.dataset.key === key) return;
+    foot.dataset.key = key;
+    const keep = $('#reply')?.value || '';
+    if (q) {
+      foot.innerHTML = `<div class="question">${q.questions.length ? q.questions.map(x => `<div class="q" data-q="${esc(x.id)}"><div class="small muted">${esc(x.header || 'Question')}</div><b>${esc(x.question)}</b>
+        <div class="opts">${x.options.map(o => `<button data-opt="${esc(o)}">${esc(o)}</button>`).join('')}</div></div>`).join('') : '<b>The agent is waiting for you.</b>'}
+        ${q.canAnswer ? '' : '<div class="small muted">Answer this one on your Mac.</div>'}</div>
+        ${q.canAnswer ? `<form class="composer" id="reply-form"><textarea id="reply" rows="1" placeholder="Or type your answer…"></textarea><div class="bar"><span class="grow"></span><button class="send" aria-label="Send">↑</button></div></form>` : ''}`;
+      const answer = text => attempt(async () => {
+        const answers = Object.fromEntries((q.questions.length ? q.questions : [{ id:'0' }]).map(x => [x.id, text]));
+        await api('/api/t3/answer', { id, requestId:q.id, answers });
+        foot.dataset.key = '';
+        setTimeout(() => draw(false).catch(() => {}), 800);
+      }, 'Answered');
+      foot.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => answer(b.dataset.opt));
+    } else {
+      const busy = st === 'busy';
+      foot.innerHTML = `${busy ? '<div class="busybar"><span class="small muted">The agent is working. You can reply when it finishes.</span><button class="small bad" id="stop">Stop</button></div>' : ''}
+        <form class="composer" id="reply-form"><textarea id="reply" rows="1" placeholder="${busy ? 'Waiting for the agent…' : `Message ${harnessName[info.session.harness]}…`}" ${busy ? 'disabled' : ''}></textarea>
+        <div class="bar"><span class="grow"></span><button class="send" aria-label="Send" ${busy ? 'disabled' : ''}>↑</button></div></form>`;
+      $('#stop')?.addEventListener('click', async () => { if (await confirmSheet('Stop the agent?', 'It stops what it is doing. You can send it a new message afterwards.', 'Stop', true)) attempt(async () => { await api('/api/t3/stop', { id }); draw(false).catch(() => {}); }, 'Stopping…'); });
+    }
+    const ta = $('#reply');
+    if (!ta) return;
+    ta.value = keep;
+    ta.oninput = () => grow(ta);
+    grow(ta);
+    $('#reply-form').onsubmit = e => {
+      e.preventDefault();
+      const text = ta.value.trim();
+      if (!text) return;
       ta.value = '';
       grow(ta);
-      $('#pick-opts').textContent = optsLabel();
-      openWhenReady(started, name);
-    });
+      if (q) {
+        const answers = Object.fromEntries((q.questions.length ? q.questions : [{ id:'0' }]).map(x => [x.id, text]));
+        attempt(async () => { await api('/api/t3/answer', { id, requestId:q.id, answers }); foot.dataset.key = ''; setTimeout(() => draw(false).catch(() => {}), 800); }, 'Answered');
+      } else send(text);
+    };
   };
+  const send = async text => {
+    const o = { text, state:'sending' };
+    outbox.push(o);
+    paint(false);
+    try { await api('/api/t3/send', { id, text }); o.state = 'sent'; }
+    catch (e) { o.state = 'failed'; o.error = e.message; }
+    paint(false);
+    setTimeout(() => draw(false).catch(() => {}), 1200);
+  };
+  const draw = async first => { info = await api(`/api/t3/thread?id=${encodeURIComponent(id)}`); paint(first); };
+  pane.innerHTML = skeleton(5, 'bubble');
+  await draw(true).catch(e => sessionError(pane, e, () => draw(true)));
+  every(2500, () => draw(false).catch(() => {}));
 }
-const grow = ta => { ta.style.height = 'auto'; ta.style.height = `${Math.min(160, ta.scrollHeight)}px`; };
-const glance = (href, label, value, fill) => `<a href="${href}"><div class="l">${label}</div><div class="v">${value}</div>${fill == null ? '' : `<div class="meter ${level(fill)}"><i style="width:${fill}%"></i></div>`}</a>`;
+
 function statusChip(s) {
   if (!s.live) return '<span class="chip">Closed</span>';
   if (s.status === 'waiting') return '<span class="chip amber"><span class="dot amber"></span>Waiting for you</span>';
@@ -755,7 +812,7 @@ async function sessionView(harness, id) {
     const s = info.session;
     const t = info.terminal;
     if (tab === 'helpers') { foot.innerHTML = ''; foot.dataset.key = 'helpers'; return; }
-    const key = tab === 'chat' ? `chat|${info.approvals.map(a => a.id)}|${info.delivery}` : tab === 'terminal' ? `term|${Boolean(t)}|${t?.choices?.map(c => c.label).join()}` : 'files';
+    const key = tab === 'chat' ? `chat|${info.approvals.map(a => a.id)}|${info.delivery}|${s.status}` : tab === 'terminal' ? `term|${Boolean(t)}|${t?.choices?.map(c => c.label).join()}` : 'files';
     if (foot.dataset.key === key) return;
     foot.dataset.key = key;
     if (tab === 'files') { foot.innerHTML = ''; return; }
@@ -766,10 +823,11 @@ async function sessionView(harness, id) {
       return;
     }
     const keep = $('#reply')?.value || '';
-    const copying = info.delivery === 'none';
-    const hint = { terminal:'Types into its Terminal tab on your Mac', resume:'Resumes it in a new Terminal window', none:'It is open in another app, so this continues in a copy in Terminal' }[info.delivery] || '';
-    foot.innerHTML = `${info.approvals.map(approvalCard).join('')}<form class="composer" id="reply-form"><textarea id="reply" rows="1" placeholder="${copying ? 'Continue in a copy…' : `Message ${harnessName[harness] || 'agent'}…`}"></textarea>
-      <div class="bar"><span class="small muted grow">${esc(hint)}</span><button class="send" aria-label="Send">↑</button></div></form>`;
+    const busy = s.live && s.status === 'busy';
+    const blocked = info.delivery === 'none' || busy;
+    const hint = busy ? 'The agent is working. You can reply when it finishes.' : { terminal:'Types into its Terminal tab on your Mac', resume:'Resumes it in a Terminal window on your Mac', none:info.deliveryNote || 'Open in another app. Reply from there.' }[info.delivery] || '';
+    foot.innerHTML = `${info.approvals.map(approvalCard).join('')}<form class="composer" id="reply-form"><textarea id="reply" rows="1" placeholder="${blocked ? (busy ? 'Waiting for the agent…' : 'Read only') : `Message ${harnessName[harness] || 'agent'}…`}" ${blocked ? 'disabled' : ''}></textarea>
+      <div class="bar"><span class="small muted grow">${esc(hint)}</span><button class="send" aria-label="Send" ${blocked ? 'disabled' : ''}>↑</button></div></form>`;
     bindApprovals(foot, () => { foot.dataset.key = ''; draw(false); });
     const ta = $('#reply');
     ta.value = keep;
@@ -779,9 +837,6 @@ async function sessionView(harness, id) {
       e.preventDefault();
       const text = ta.value.trim();
       if (!text) return;
-      if (copying) {
-        return attempt(async () => { const copy = await api('/api/session/fork', { harness, id, text }); ta.value = ''; grow(ta); openWhenReady(copy, copy.name); });
-      }
       ta.value = '';
       grow(ta);
       send(text);
@@ -860,129 +915,6 @@ async function subagentView(harness, id, agent) {
   pane.innerHTML = skeleton(5, 'bubble');
   await draw(true).catch(e => sessionError(pane, e, () => draw(true)));
   every(3000, () => draw(false).catch(() => {}));
-}
-
-// ---------- This Mac ----------
-const sysTabs = { processes:'Processes', ports:'Network', startup:'Startup', updates:'Updates', privacy:'Privacy' };
-async function systemView(sub) {
-  const view = $('#view');
-  view.innerHTML = `<div class="top"><h1>This Mac</h1></div><div class="seg" id="sys-tabs">${Object.entries(sysTabs).map(([k, v]) => `<button data-k="${k}" class="${k === sub ? 'on' : ''}">${v}</button>`).join('')}</div><div id="sys"></div>`;
-  $('#sys-tabs').onclick = e => { const b = e.target.closest('[data-k]'); if (b) location.hash = `#/system/${b.dataset.k}`; };
-  const box = $('#sys');
-  const show = { processes, ports, startup, updates, privacy }[sub] || processes;
-  // Each attempt renders into a fresh container, swapped in once its first data has arrived.
-  await firstLoad(box, async () => { const inner = document.createElement('div'); await show(inner); box.replaceChildren(inner); }, `<div style="margin-top:12px">${skeleton(1, 'line')}${skeleton(7)}</div>`);
-}
-
-function searchable(box, placeholder, renderRows) {
-  let q = '';
-  box.innerHTML = `<div class="search"><input type="search" id="q" placeholder="${placeholder}" autocapitalize="off" autocorrect="off"></div><div class="list" id="rows"></div>`;
-  const draw = () => { box.querySelector('#rows').innerHTML = renderRows(q.toLowerCase()); };
-  box.querySelector('#q').oninput = e => { q = e.target.value; draw(); };
-  return draw;
-}
-
-async function processes(box) {
-  let rows = [];
-  let sort = 'cpu';
-  const draw = searchable(box, 'Search processes', q => {
-    const list = rows.filter(p => !q || `${p.name} ${p.command} ${p.pid}`.toLowerCase().includes(q)).sort((a, b) => sort === 'cpu' ? b.cpu - a.cpu : b.rss - a.rss).slice(0, 80);
-    return `<div class="seg"><button data-sort="cpu" class="${sort === 'cpu' ? 'on' : ''}">By CPU</button><button data-sort="mem" class="${sort === 'mem' ? 'on' : ''}">By memory</button></div>` +
-      list.map(p => `<button class="row" data-pid="${p.pid}" style="text-align:left"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${p.pid} · ${esc(p.user)} · up ${esc(p.elapsed)}</div></div><div class="metric">${p.cpu.toFixed(1)}%<div class="small muted">${bytes(p.rss)}</div></div></button>`).join('');
-  });
-  const load = async () => { rows = await api('/api/processes'); draw(); };
-  box.addEventListener('click', e => {
-    const s = e.target.closest('[data-sort]');
-    if (s) { sort = s.dataset.sort; return draw(); }
-    const r = e.target.closest('[data-pid]');
-    if (!r) return;
-    const p = rows.find(x => x.pid === Number(r.dataset.pid));
-    sheet(`<h3>${esc(p.name)}</h3><pre class="small muted">${esc(p.command)}</pre><div class="small muted">PID ${p.pid} · ${esc(p.user)} · ${p.cpu.toFixed(1)}% CPU · ${bytes(p.rss)} · up ${esc(p.elapsed)}</div>
-      <button data-sig="term">Quit</button><button class="bad" data-sig="kill">Force quit</button><button class="ghost" data-close>Close</button>`, card => {
-      card.querySelectorAll('[data-sig]').forEach(b => b.onclick = () => { closeSheet(); attempt(async () => { await api('/api/processes/kill', { pid:p.pid, force:b.dataset.sig === 'kill' }); load(); }, 'Signal sent'); });
-    });
-  });
-  await load();
-  every(5000, load);
-}
-
-async function ports(box) {
-  let rows = [];
-  const draw = searchable(box, 'Search ports or programs', q => rows.filter(p => !q || `${p.command} ${p.port}`.toLowerCase().includes(q)).map(p => `
-    <button class="row" data-pid="${p.pid}" data-name="${esc(p.command)}" style="text-align:left"><div class="metric" style="text-align:left;min-width:64px">:${p.port}</div><div class="grow"><div class="t">${esc(p.command)}</div><div class="s">${p.protocol} · ${esc(p.address)} · pid ${p.pid}</div></div>${p.exposed ? '<span class="chip amber">Exposed</span>' : '<span class="chip green">Local</span>'}</button>`).join('') || '<div class="empty">Nothing is listening.</div>');
-  const load = async () => { rows = await api('/api/ports'); draw(); };
-  box.addEventListener('click', e => {
-    const r = e.target.closest('[data-pid]');
-    if (r) confirmSheet(`Stop ${r.dataset.name}?`, `PID ${r.dataset.pid}. Anything using this port will disconnect.`, 'Stop it', true).then(ok => ok && attempt(async () => { await api('/api/processes/kill', { pid:Number(r.dataset.pid) }); load(); }, 'Signal sent'));
-  });
-  await load();
-  every(8000, load);
-}
-
-async function startup(box) {
-  let rows = [];
-  const scope = { user:'Yours', 'global-agent':'All users', daemon:'System' };
-  const draw = searchable(box, 'Search startup items', q => rows.filter(r => !q || `${r.label} ${r.program}`.toLowerCase().includes(q)).map(r => `
-    <button class="row" data-label="${esc(r.label)}" style="text-align:left"><span class="dot ${r.pid ? 'green' : ''}"></span><div class="grow"><div class="t">${esc(r.label)}</div><div class="s">${scope[r.scope]} · ${r.pid ? `running (${r.pid})` : r.loaded ? 'loaded' : r.scope === 'daemon' ? 'system' : 'not loaded'}${r.runAtLoad ? ' · at login' : ''}</div></div><span class="chev">›</span></button>`).join(''));
-  const load = async () => { rows = await api('/api/startup'); draw(); };
-  box.addEventListener('click', e => {
-    const b = e.target.closest('[data-label]');
-    if (!b) return;
-    const r = rows.find(x => x.label === b.dataset.label);
-    sheet(`<h3>${esc(r.label)}</h3><pre class="small muted">${esc(r.program || r.file)}</pre><div class="small muted">${esc(home(r.file))}</div>
-      ${r.controllable ? (r.loaded ? '<button class="bad" data-a="stop">Stop and unload</button>' : '<button class="primary" data-a="start">Start</button>') : '<div class="small muted">System daemons need sudo to change.</div>'}
-      ${me.local ? '<button data-a="reveal">Show in Finder</button>' : ''}<button class="ghost" data-close>Close</button>`, card => {
-      card.querySelectorAll('[data-a]').forEach(x => x.onclick = () => { closeSheet(); attempt(async () => { await api(x.dataset.a === 'reveal' ? '/api/startup/reveal' : '/api/startup/action', { label:r.label, action:x.dataset.a }); load(); }, x.dataset.a === 'reveal' ? '' : 'Done'); });
-    });
-  });
-  await load();
-}
-
-async function updates(box) {
-  const names = { macos:'macOS', brew:'Homebrew', npm:'npm global' };
-  let shown = '';
-  const load = async () => {
-    const u = await api('/api/updates');
-    const running = new Set(u.jobs.filter(j => j.status === 'running').map(j => j.itemId));
-    const active = u.jobs.filter(j => j.status === 'running' || Date.now() - (j.finishedAt || 0) < 60000);
-    const html = `<div class="section"><span class="muted small">${u.checking ? 'Checking… macOS can take a minute' : `Checked ${ago(u.checkedAt)}`}</span><button class="small" id="recheck" ${u.checking ? 'disabled' : ''}>Check now</button></div>
-      ${active.map(j => `<div class="card" style="margin-bottom:8px"><div class="kv"><span class="chip ${j.status === 'done' ? 'green' : j.status === 'failed' ? 'red' : 'blue'}">${j.status}</span><span class="mono small">${esc(j.title)}</span></div><pre class="small muted" style="max-height:120px;overflow:auto;margin-top:8px">${esc(j.output.slice(-1500))}</pre></div>`).join('')}
-      ${['macos', 'brew', 'npm'].map(k => {
-        const s = u.sources[k];
-        const items = s?.items || [];
-        const head = `<div class="section"><h2>${names[k]}<span class="count">${items.length}</span></h2>${k === 'brew' && items.length ? '<button class="small" id="all-brew">Update all</button>' : ''}</div>`;
-        if (!s) return `${head}<div class="empty">${u.checking ? 'Checking…' : 'Not checked yet'}</div>`;
-        if (!s.available) return `${head}<div class="empty">${esc(s.error)}</div>`;
-        return head + (items.length ? `<div class="list">${items.map(i => `<div class="row"><div class="grow"><div class="t">${esc(i.name)}</div><div class="s">${esc(i.installed || '')}${i.installed ? ' → ' : ''}${esc(i.latest)}${i.restart ? ' · needs restart' : ''}</div></div>
-          ${i.kind === 'macos' ? (me.local ? '<button class="small" data-open-su>Open</button>' : '<span class="small muted">On Mac</span>') : `<button class="small primary" data-up="${esc(i.id)}" ${running.has(i.id) || i.pinned ? 'disabled' : ''}>${running.has(i.id) ? '…' : 'Update'}</button>`}</div>`).join('')}</div>` : '<div class="empty">Up to date</div>');
-      }).join('')}`;
-    if (html === shown) return;
-    shown = html;
-    box.innerHTML = html;
-    box.querySelector('#recheck').onclick = () => attempt(async () => { await api('/api/updates/refresh', {}); load(); });
-    box.querySelectorAll('[data-up]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/updates/upgrade', { id:b.dataset.up }); load(); }, 'Updating'));
-    box.querySelectorAll('[data-open-su]').forEach(b => b.onclick = () => attempt(() => api('/api/updates/open-macos', {})));
-    box.querySelector('#all-brew')?.addEventListener('click', async () => {
-      if (!await confirmSheet('Update all Homebrew packages?', `${u.sources.brew.items.length} packages, one at a time.`, 'Update all')) return;
-      attempt(async () => { await api('/api/updates/upgrade-all', { source:'brew' }); load(); }, 'Updating');
-    });
-  };
-  await load();
-  every(4000, load);
-}
-
-async function privacy(box) {
-  const p = await api('/api/privacy');
-  const groups = new Map();
-  for (const r of p.rows) { if (!groups.has(r.label)) groups.set(r.label, []); groups.get(r.label).push(r); }
-  box.innerHTML = `<p class="small muted" style="margin:14px 2px">Which apps can use your camera, microphone, screen and files. macOS only lets you grant access in System Settings; you can revoke it from here.</p>
-    ${p.needsFullDiskAccess ? `<div class="banner"><div class="grow small">macOS hides this list unless AgentsEye's <code>node</code> has <b>Full Disk Access</b>. Add <code>${esc(p.node)}</code> in System Settings, then restart AgentsEye.</div>${me.local ? '<button class="small primary" data-pane="kTCCServiceSystemPolicyAllFiles">Open</button>' : ''}</div>` : ''}
-    ${[...groups].sort().map(([label, rows]) => `<div class="section"><h2>${esc(label)}<span class="count">${rows.length}</span></h2>${me.local ? `<button class="small ghost" data-pane="${esc(rows[0].service)}">Settings ›</button>` : ''}</div><div class="list">${rows.map(r => `
-      <div class="row"><div class="grow"><div class="t">${esc(r.client.split(/[./]/).pop())}</div><div class="s">${esc(r.client)}</div></div><span class="chip ${r.status === 'allowed' ? 'green' : r.status === 'denied' ? 'red' : 'amber'}">${esc(r.status)}</span>${r.revocable && r.status !== 'denied' ? `<button class="small bad" data-revoke="${esc(r.service)}" data-client="${esc(r.client)}">Revoke</button>` : ''}</div>`).join('')}</div>`).join('')}`;
-  box.querySelectorAll('[data-pane]').forEach(b => b.onclick = () => attempt(() => api('/api/privacy/open', { service:b.dataset.pane })));
-  box.querySelectorAll('[data-revoke]').forEach(b => b.onclick = async () => {
-    if (await confirmSheet(`Revoke ${b.dataset.client}?`, 'It will ask again the next time it needs access.', 'Revoke', true)) attempt(async () => { await api('/api/privacy/revoke', { service:b.dataset.revoke, client:b.dataset.client }); privacy(box); }, 'Revoked');
-  });
 }
 
 // ---------- Settings ----------

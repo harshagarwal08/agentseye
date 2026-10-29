@@ -5,6 +5,7 @@ import * as approvals from './approvals.js';
 import * as auth from './auth.js';
 import * as push from './push.js';
 import { usage } from './usage.js';
+import * as t3 from './t3.js';
 
 // Prefer the name the person gave the session; fall back to its folder.
 const label = (id, cwd) => nameOf('claude', id) || path.basename(cwd || '') || 'Claude';
@@ -15,6 +16,8 @@ export function start() {
   setInterval(() => {
     const now = claudeLive();
     for (const [id, s] of now) {
+      // T3 Code runs its own Claude sessions; those are announced from their T3 thread below.
+      if (s.entrypoint === 'sdk-ts') continue;
       const before = last.get(id);
       if (s.status === 'waiting' && before !== 'waiting') {
         push.notify({ title:`${label(id, s.cwd)} needs your OK`, body:s.name || 'Claude is waiting for you.', url:`/#/s/claude/${id}`, tag:`ask-${id}` });
@@ -24,6 +27,18 @@ export function start() {
     }
     last = new Map([...now].map(([id, s]) => [id, s.status]));
   }, 5000).unref();
+
+  // T3 Code threads: a ping when one starts waiting on you, and when one finishes or fails.
+  t3.onChange(({ kind, before, after }) => {
+    if (kind !== 'thread' || !before || !after) return;
+    const was = t3.summarize(before);
+    const now = t3.summarize(after);
+    if (now.status === was.status) return;
+    const url = `/#/t/${now.id}`;
+    if (now.status === 'waiting') push.notify({ title:`${now.title} needs your input`, body:now.project ? `${now.project} · tap to answer` : 'Tap to answer', url, tag:`t3-${now.id}` });
+    else if (was.status === 'busy' && now.status === 'done') push.notify({ title:`${now.title} finished`, body:now.preview || 'Tap to see the reply.', url, tag:`t3-${now.id}` });
+    else if (was.status === 'busy' && now.status === 'failed') push.notify({ title:`${now.title} failed`, body:now.error || 'Tap to see what happened.', url, tag:`t3-${now.id}` });
+  });
 
   // One heads-up per limit window when it passes 90%, so you can pace work before you hit the wall.
   const warned = new Set();

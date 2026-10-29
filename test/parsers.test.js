@@ -97,3 +97,13 @@ test('usage limits: Claude endpoint and Codex rate_limits', async () => {
   assert.equal(codex[1].resetsAt, 1793382538000);
   assert.deepEqual(parseCodexRateLimits(null), []);
 });
+
+test('T3 thread states: waiting beats working, queued counts as working', async () => {
+  const { summarize } = await import('../server/t3.js');
+  const base = { id:'t', title:'x', providerInstanceId:'claudeAgent', updatedAt:'2026-10-29T10:00:00Z' };
+  assert.equal(summarize({ ...base, status:'queued', activityRunStatus:'running' }).status, 'busy');
+  assert.equal(summarize({ ...base, status:'running', pendingRuntimeRequest:{ id:'r' } }).status, 'waiting');
+  assert.equal(summarize({ ...base, status:'completed' }).status, 'done');
+  assert.equal(summarize({ ...base, status:'failed' }).status, 'failed');
+  assert.equal(summarize({ ...base, status:'idle', providerInstanceId:'codex' }).harness, 'codex');
+});

@@ -1,4 +1,5 @@
 import http from 'node:http';
+import os from 'node:os';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,6 +21,7 @@ import * as preview from './preview.js';
 import * as service from './service.js';
 import * as relay from './relay-client.js';
 import * as updater from './updater.js';
+import * as t3 from './t3.js';
 import * as e2e from '../public/e2e.js';
 import { hasSubscriptions } from './push.js';
 import * as push from './push.js';
@@ -76,8 +78,17 @@ const localOnly = req => { if (!isLocal(req)) throw fail('Only possible on the M
 const pendingDevices = () => auth.listDevices().filter(d => !d.approved);
 function needsYou() {
   const pending = approvals.list().pending;
-  const waiting = [...agents.claudeLive()].filter(([id, s]) => s.status === 'waiting' && !pending.some(p => p.sessionId === id));
-  return pending.length + waiting.length;
+  const waiting = [...agents.claudeLive()].filter(([id, s]) => s.status === 'waiting' && s.entrypoint !== 'sdk-ts' && !pending.some(p => p.sessionId === id));
+  return pending.length + waiting.length + t3.threads().filter(t => t.status === 'waiting').length;
+}
+
+// Every agent in one list: T3 Code threads (chat through T3), plus Claude/Codex sessions running elsewhere
+// (Terminal, VS Code). Sessions T3 itself runs (entrypoint sdk-ts) are already covered by their T3 thread.
+async function allAgents() {
+  const local = (await agents.sessions({ limit:30 }))
+    .filter(s => s.live && s.entrypoint !== 'sdk-ts' && !(t3.status().connected && s.harness === 'codex' && !s.entrypoint))
+    .map(s => ({ ...s, source:'local' }));
+  return [...t3.threads(), ...local];
 }
 const updateCount = () => Object.values(updates.summary().sources).reduce((n, s) => n + (s.items?.length || 0), 0);
 
@@ -92,8 +103,8 @@ async function sessionDelivery(session) {
 const routes = {
   'GET /api/badges':() => ({ needsYou:needsYou(), updates:updateCount(), devicesWaiting:pendingDevices().length }),
   'GET /api/home':async () => {
-    const [stats, sessions, limits] = await Promise.all([system.stats(), agents.sessions({ limit:30 }), usage()]);
-    return { stats, sessions, limits, approvals:approvals.list().pending, updates:updateCount(), devicesWaiting:pendingDevices(), projects:agents.projects(sessions) };
+    const [list, limits] = await Promise.all([allAgents(), usage()]);
+    return { agents:list, limits, t3:t3.status(), t3Projects:t3.projects(), approvals:approvals.list().pending, devicesWaiting:pendingDevices(), host:os.hostname().replace(/\.local$/, '') };
   },
 
   'GET /api/session':async (_, url) => {
@@ -121,6 +132,12 @@ const routes = {
     if (view === 'files') out.files = recentFiles(session.cwd);
     return out;
   },
+  'GET /api/agents':() => agents.sessions(),
+  'GET /api/t3/thread':(_, url) => t3.thread(url.searchParams.get('id') || ''),
+  'POST /api/t3/send':async b => { const text = String(b.text || '').trim(); if (!text) throw fail('Write a message first.'); await t3.sendMessage(String(b.id), text.slice(0, 20000)); return { ok:true }; },
+  'POST /api/t3/answer':async b => { await t3.answer(String(b.id), String(b.requestId), Object.fromEntries(Object.entries(b.answers || {}).map(([k, v]) => [String(k), String(v).slice(0, 4000)]))); return { ok:true }; },
+  'POST /api/t3/stop':async b => { await t3.stop(String(b.id)); return { ok:true }; },
+  'POST /api/t3/create':async b => { const text = String(b.text || '').trim(); if (!text) throw fail('Write what the agent should do.'); return t3.create({ projectId:String(b.projectId), text:text.slice(0, 20000), harness:String(b.harness || 'claude') }); },
   'POST /api/session/send':async b => {
     const text = String(b.text || '').trim();
     if (!text || text.length > 20000) throw fail('Write a message first.');
@@ -148,13 +165,6 @@ const routes = {
     return started;
   },
   'GET /api/agents/new':(_, url) => agents.findNew(url.searchParams.get('harness'), url.searchParams.get('cwd') || '', Number(url.searchParams.get('since')) || 0, url.searchParams.get('id') || ''),
-  'POST /api/session/fork':async b => {
-    const session = await agents.findSession(String(b.harness), String(b.id));
-    const text = String(b.text || '').slice(0, 20000);
-    const copy = await agents.fork(session.harness, session.id, session.cwd, text, startOptions(b));
-    if (copy.id) rename(copy.harness, copy.id, `${session.name || session.title} (copy)`.slice(0, 80));
-    return { ...copy, name:`${session.name || session.title} (copy)`.slice(0, 80) };
-  },
   'GET /api/usage':(_, url) => usage({ force:url.searchParams.get('force') === '1' }),
 
   'GET /api/processes':() => system.processes(),
@@ -449,6 +459,7 @@ export function main() {
   power.apply();
   createServer().listen(PORT, '127.0.0.1', () => console.log(`AgentsEye running at http://localhost:${PORT}`));
   relay.boot(PORT);
+  t3.boot();
   updater.boot();
   preview.createProxy().listen(preview.PREVIEW_PORT, '127.0.0.1');
 }

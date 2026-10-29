@@ -97,7 +97,7 @@ test('wrong password is rejected; sign-in and approval work end to end', async (
   await fetch('http://127.0.0.1:4495/api/devices/approve', { method:'POST', headers:{ cookie:macCookie, 'content-type':'application/json', 'x-agentseye':'1' }, body:JSON.stringify({ id:pending.id }) });
   const homeData = await sealed('GET', '/api/home');
   assert.equal(homeData.status, 200);
-  assert.ok(Array.isArray(homeData.json.sessions));
+  assert.ok(Array.isArray(homeData.json.agents));
 });
 
 test('large replies stream through in chunks', async () => {
