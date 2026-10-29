@@ -11,8 +11,10 @@ approve their commands, start new ones, and keep an eye on usage limits — from
 
 ## Install (Mac)
 
+Website: **https://agentseye.agentseye.workers.dev**
+
 ```bash
-curl -fsSL https://agentseye.<your-account>.workers.dev/install.sh | sh
+curl -fsSL https://agentseye.agentseye.workers.dev/install.sh | sh
 ```
 
 It installs into `~/.agentseye` (downloading a private Node if needed), starts at login, keeps itself updated, and
