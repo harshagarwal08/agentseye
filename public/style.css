@@ -368,3 +368,15 @@ button.primary.busy::after, button.good.busy::after, .send.busy::after { border-
 .msg table { border-collapse:collapse; font-size:14px; min-width:100%; }
 .msg th, .msg td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
 .msg th { font-weight:700; background:var(--card-2); }
+/* Roomier, calmer chat footer: a slim status line, then the chat box. */
+.foot { gap:10px; padding:10px 12px calc(10px + var(--safe-b)); }
+.statusbar { display:flex; align-items:center; gap:10px; min-height:34px; padding:0 4px 0 8px; font-size:14px; color:var(--muted); }
+.statusbar .grow { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.statusbar .small { min-height:32px; padding:4px 14px; }
+.quick { gap:8px; mask-image:linear-gradient(90deg, #000 85%, transparent); -webkit-mask-image:linear-gradient(90deg, #000 85%, transparent); }
+.quick button { min-height:30px; padding:3px 12px; font-size:13px; }
+.foot .composer { padding:6px 6px 6px 8px; gap:8px; align-items:center; }
+.foot .composer textarea { min-height:36px; padding:8px 0; }
+.foot .composer textarea::placeholder { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.foot .composer .clip { align-self:center; margin:0; }
+.foot .composer .bar { align-self:flex-end; }

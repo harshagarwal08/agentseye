@@ -647,8 +647,8 @@ async function newChatSheet(d) {
 // One chat box for every agent: quick replies, a photo button, and while the agent works, messages queue up
 // and go out on their own when it finishes.
 const QUICK = ['Continue', 'Yes, go ahead', 'Run the tests', 'Commit it'];
-function composer({ placeholder, disabled = false }) {
-  return `${disabled ? '' : `<div class="quick">${QUICK.map(q => `<button type="button" data-quick="${esc(q)}">${esc(q)}</button>`).join('')}</div>`}
+function composer({ placeholder, disabled = false, quick = true }) {
+  return `${disabled || !quick ? '' : `<div class="quick">${QUICK.map(q => `<button type="button" data-quick="${esc(q)}">${esc(q)}</button>`).join('')}</div>`}
     <div class="attached" id="attached" hidden></div>
     <form class="composer" id="reply-form"><button type="button" class="clip" id="attach" aria-label="Attach a photo" ${disabled ? 'disabled' : ''}>＋</button><input type="file" id="attach-file" accept="image/*" multiple hidden>
       <textarea id="reply" rows="1" placeholder="${esc(placeholder)}" ${disabled ? 'disabled' : ''}></textarea>
@@ -707,7 +707,9 @@ function bindComposer(root, { keep = '', onSend, before }) {
     onSend(text);
   };
 }
-const queuedHtml = list => (list || []).map(q => `<div class="msg user pending queued">${esc(q.text).replace(/\n/g, '<br>')}<div class="when">⏳ Sends when the agent finishes · <button class="linkish" data-unqueue="${q.id}">Cancel</button></div></div>`).join('');
+// A person's own message: line breaks kept, and photos sent from the phone shown as a label, not a path on the Mac.
+const userText = text => esc(String(text || '').replace(/\[Photo from my phone: [^\]]+\]/g, '\u{1F4F7} Photo').trim()).replace(/\n/g, '<br>');
+const queuedHtml = list => (list || []).map(q => `<div class="msg user pending queued">${userText(q.text)}<div class="when">⏳ Sends when the agent finishes · <button class="linkish" data-unqueue="${q.id}">Cancel</button></div></div>`).join('');
 const bindQueued = (pane, after) => pane.querySelectorAll('[data-unqueue]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/queue/remove', { id:b.dataset.unqueue }); after(); }, 'Cancelled'));
 
 // ---------- Changes ----------
@@ -780,10 +782,9 @@ async function t3View(id, app = '') {
     $('#s-chip').innerHTML = { waiting:'<span class="chip amber">Needs you</span>', busy:'<span class="chip blue"><span class="spin"></span>Working</span>', failed:'<span class="chip red">Failed</span>' }[st] || '<span class="chip green">Ready</span>';
     const said = new Set(info.messages.filter(m => m.role === 'user').map(m => m.text.trim()));
     outbox = outbox.filter(o => o.state !== 'sent' || !said.has(o.text));
-    const html = (info.messages.map(m => `<div class="msg ${m.role}">${m.role === 'assistant' ? markdown(m.text) : esc(m.text).replace(/\n/g, '<br>')}<div class="when">${ago(m.time)}</div></div>`).join('') || (outbox.length ? '' : '<div class="empty">No messages yet.</div>'))
+    const html = (info.messages.map(m => `<div class="msg ${m.role}">${m.role === 'assistant' ? markdown(m.text) : userText(m.text)}<div class="when">${ago(m.time)}</div></div>`).join('') || (outbox.length ? '' : '<div class="empty">No messages yet.</div>'))
       + queuedHtml(info.queued)
-      + outbox.map((o, i) => `<div class="msg user pending ${o.state}">${esc(o.text).replace(/\n/g, '<br>')}<div class="when">${{ sending:'<span class="spin"></span> Sending…', sent:'✓ Sent', failed:`Not sent: ${esc(o.error)} · <button class="linkish" data-resend="${i}">Retry</button>` }[o.state]}</div></div>`).join('')
-      + (st === 'busy' ? `<div class="typing"><span class="spin"></span> ${esc(info.activity ? `Working · ${info.activity}` : 'Working…')}</div>` : '')
+      + outbox.map((o, i) => `<div class="msg user pending ${o.state}">${userText(o.text)}<div class="when">${{ sending:'<span class="spin"></span> Sending…', sent:'✓ Sent', failed:`Not sent: ${esc(o.error)} · <button class="linkish" data-resend="${i}">Retry</button>` }[o.state]}</div></div>`).join('')
       + (s.error && st === 'failed' ? `<div class="msg system">⚠️ ${esc(s.error)}</div>` : '');
     if (html !== lastPane) {
       const atEnd = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 140;
@@ -794,6 +795,7 @@ async function t3View(id, app = '') {
       bindQueued(pane, () => draw(false));
     }
     paintFoot(st);
+    if ($('#activity')) $('#activity').textContent = info.activity ? `Working · ${info.activity}` : 'Working…';
   };
   const paintFoot = st => {
     const q = info.question;
@@ -821,8 +823,8 @@ async function t3View(id, app = '') {
     } else {
       // While it works, anything typed is queued and sent when it finishes.
       const busy = st === 'busy';
-      foot.innerHTML = `${busy ? '<div class="busybar"><span class="small muted">Working. Messages you send now go out when it finishes.</span><button class="small bad" id="stop">Stop</button></div>' : ''}
-        ${composer({ placeholder:busy ? 'Queue a message for when it finishes…' : `Message ${harnessName[info.session.harness]}…` })}`;
+      foot.innerHTML = `${busy ? '<div class="statusbar"><span class="spin"></span><span class="grow" id="activity"></span><button class="small bad" id="stop">Stop</button></div>' : ''}
+        ${composer({ placeholder:busy ? 'Queue a message…' : `Message ${harnessName[info.session.harness]}…`, quick:!busy })}`;
       $('#stop')?.addEventListener('click', async () => { if (await confirmSheet('Stop the agent?', 'It stops what it is doing. You can send it a new message afterwards.', 'Stop', true)) attempt(async () => { await api('/api/t3/stop', { id }); draw(false).catch(() => {}); }, 'Stopping…'); });
       bindComposer(foot, { keep, onSend:text => (busy ? attempt(async () => { await api('/api/queue', { kind:'t3', id, text }); lastPane = ''; await draw(false); }, 'Queued') : send(text)) });
       return;
@@ -985,9 +987,9 @@ async function sessionView(harness, id) {
       // A sent message stays as a pending bubble until it shows up in the transcript.
       const said = new Set(info.messages.filter(m => m.role === 'user').map(m => m.text.trim()));
       outbox = outbox.filter(o => o.state !== 'sent' || !said.has(o.text));
-      html = (info.messages.map(m => m.role === 'tool' ? `<div class="tool">▸ ${esc(m.text)}</div>` : `<div class="msg ${m.role}">${m.role === 'assistant' ? markdown(m.text) : esc(m.text).replace(/\n/g, '<br>')}${fileButtons(m.files, harness, id)}<div class="when">${ago(m.time)}</div></div>`).join('') || (outbox.length ? '' : '<div class="empty">No messages yet. Say something below.</div>'))
+      html = (info.messages.map(m => m.role === 'tool' ? `<div class="tool">▸ ${esc(m.text)}</div>` : `<div class="msg ${m.role}">${m.role === 'assistant' ? markdown(m.text) : userText(m.text)}${fileButtons(m.files, harness, id)}<div class="when">${ago(m.time)}</div></div>`).join('') || (outbox.length ? '' : '<div class="empty">No messages yet. Say something below.</div>'))
         + queuedHtml(info.queued)
-        + outbox.map((o, i) => `<div class="msg user pending ${o.state}">${esc(o.text).replace(/\n/g, '<br>')}<div class="when">${{ sending:'<span class="spin"></span> Sending to your Mac…', sent:'✓ Delivered · waiting for the agent', failed:`Not sent: ${esc(o.error)} · <button class="linkish" data-resend="${i}">Retry</button>` }[o.state]}</div></div>`).join('');
+        + outbox.map((o, i) => `<div class="msg user pending ${o.state}">${userText(o.text)}<div class="when">${{ sending:'<span class="spin"></span> Sending to your Mac…', sent:'✓ Delivered · waiting for the agent', failed:`Not sent: ${esc(o.error)} · <button class="linkish" data-resend="${i}">Retry</button>` }[o.state]}</div></div>`).join('');
     } else if (tab === 'helpers') {
       html = info.helpers.length ? `<div class="list">${info.helpers.map(helperRow(harness, id)).join('')}</div>` : '<div class="empty">This session has not started any subagents.</div>';
     } else if (tab === 'terminal') {
@@ -1025,9 +1027,9 @@ async function sessionView(harness, id) {
     const keep = $('#reply')?.value || '';
     const busy = s.live && s.status === 'busy';
     const blocked = info.delivery === 'none' && !info.canMove;
-    const note = busy ? 'Working. Messages you send now go out when it finishes.' : info.delivery === 'none' ? info.deliveryNote : '';
-    foot.innerHTML = `${info.approvals.map(approvalCard).join('')}${note ? `<div class="busybar"><span class="small muted">${esc(note)}</span></div>` : ''}
-      ${composer({ placeholder:blocked ? 'Read only' : busy ? 'Queue a message for when it finishes…' : `Message ${harnessName[harness] || 'agent'}…`, disabled:blocked })}`;
+    const note = !busy && info.delivery === 'none' ? info.deliveryNote : '';
+    foot.innerHTML = `${info.approvals.map(approvalCard).join('')}${busy ? '<div class="statusbar"><span class="spin"></span><span class="grow">Working…</span></div>' : note ? `<div class="busybar"><span class="small muted">${esc(note)}</span></div>` : ''}
+      ${composer({ placeholder:blocked ? 'Read only' : busy ? 'Queue a message…' : `Message ${harnessName[harness] || 'agent'}…`, disabled:blocked, quick:!busy })}`;
     bindApprovals(foot, () => { foot.dataset.key = ''; draw(false); });
     if (blocked) return;
     bindComposer(foot, {
