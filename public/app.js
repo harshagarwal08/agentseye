@@ -556,14 +556,16 @@ function openWhenReady(started, name) {
 }
 
 // ---------- Relay settings ----------
-function relayRow(r) {
-  const state = { on:`On · ${esc(r.link)}`, connecting:'Connecting to the relay…', error:esc(r.error || 'The relay refused this Mac.'), off:'Works on company Macs: nothing to install, encrypted end to end.' }[r.status] || '';
-  return `<div class="item" style="flex-wrap:wrap"><div class="grow"><b>AgentsEye relay</b> <span class="chip green">Recommended</span><div class="s">${state}</div></div>
-    ${me.local ? `<label class="switch"><input type="checkbox" id="relay-on" ${r.enabled ? 'checked' : ''}><i></i></label>` : ''}
-    ${me.local ? `<div style="flex-basis:100%;display:grid;gap:8px;margin-top:10px">
-      <input id="relay-url" placeholder="Relay address, e.g. https://agentseye-relay.you.workers.dev" value="${esc(r.url)}" autocapitalize="off" autocorrect="off" inputmode="url">
-      ${r.keyReady ? '' : '<input id="relay-pw" type="password" placeholder="Your AgentsEye password (once, to set up encryption)" autocomplete="current-password">'}
-      ${r.enabled ? '' : '<div class="small muted">Deploy your own relay for free on Cloudflare (see relay/README.md), or use one your team runs.</div>'}</div>` : ''}</div>`;
+function relayRow(r, expanded = false) {
+  const status = { on:'Connected', connecting:'Connecting…', error:'Connection issue', off:'Off' }[r.status] || 'Unavailable';
+  return `<div class="item phone-relay"><div class="grow"><div class="connection-title"><b>AgentsEye relay</b><span class="connection-status ${r.status === 'on' ? 'connected' : ''}"><span class="dot ${r.status === 'on' ? 'green' : ''}"></span>${status}</span></div><div class="s">Encrypted access from anywhere.</div></div>
+    ${me.local ? `<label class="switch"><input type="checkbox" aria-label="AgentsEye relay" id="relay-on" ${r.enabled ? 'checked' : ''}><i></i></label>` : ''}
+    ${r.status === 'error' ? `<div class="connection-error small">${esc(r.error || 'Could not connect. Check the relay address on your Mac.')}</div>` : ''}
+    ${r.link ? `<div class="phone-link"><div class="grow"><div class="small muted">Your phone link</div><div class="phone-address" title="${esc(r.link)}">${esc(r.link.replace(/^https?:\/\//, ''))}</div></div><button class="small" data-copy-phone="${esc(r.link)}">Copy link</button></div>` : ''}
+    ${me.local ? `<details class="relay-config" id="relay-config" ${expanded || !r.keyReady ? 'open' : ''}><summary>Relay settings</summary><div class="connection-fields">
+      <label for="relay-url">Relay address</label><input id="relay-url" placeholder="https://your-relay.workers.dev" value="${esc(r.url)}" autocapitalize="off" autocorrect="off" inputmode="url">
+      ${r.keyReady ? '' : '<label for="relay-pw">AgentsEye password</label><input id="relay-pw" type="password" placeholder="Set up encryption" autocomplete="current-password">'}
+      <div class="small muted">Use the default relay or enter your own address. Toggle access to apply changes.</div></div></details>` : ''}</div>`;
 }
 function bindRelayRow(root, r, after) {
   const toggle = root.querySelector('#relay-on');
@@ -1395,16 +1397,18 @@ async function settingsView() {
     const p = s.power;
     // Phone access is set up at the Mac, so it comes first there; on a phone the everyday settings lead.
     const phoneAccess = `      <div class="section"><h2>Phone access</h2></div>
-      <div class="group">
-        ${relayRow(s.relay)}
-        <div class="item"><div class="grow"><b>Private link with Tailscale</b><div class="s">${{ missing:'A free app that links your own devices. The address never changes and nobody else can reach it.', 'signed-out':'Installed. Open Tailscale and sign in, on this Mac and on your phone.', stopped:'Tailscale is off. Open it and connect.', running:s.tailscale.serving ? `On · ${esc(s.tailscale.url)}` : 'Connected. Turn on to serve AgentsEye to your devices.' }[s.tailscale.state] || 'Unavailable'}</div></div>
+      <div class="group phone-access">
+        ${relayRow(s.relay, view.querySelector('#relay-config')?.open)}
+        <details class="connection-options" id="phone-options" ${(view.querySelector('#phone-options')?.open ?? (s.tailscale.serving || t.enabled || Boolean(t.error && t.status !== 'missing'))) ? 'open' : ''}><summary><span>Other connection options</span><span class="options-hint">Tailscale, Cloudflare</span></summary><div class="connection-choices">
+        ${!me.local ? '<p class="small muted connection-note">Set up these options on your Mac.</p>' : ''}
+        <div class="item"><div class="grow"><b>Tailscale</b><div class="s">${{ missing:'Private access between your devices.', 'signed-out':'Sign in to Tailscale on both devices.', stopped:'Open Tailscale to connect.', running:s.tailscale.serving ? 'On · Private device connection' : 'Ready · Turn on phone access' }[s.tailscale.state] || 'Unavailable'}</div></div>
           ${me.local ? (s.tailscale.state === 'running' ? `<label class="switch"><input type="checkbox" id="ts" ${s.tailscale.serving ? 'checked' : ''}><i></i></label>` : `<button class="small" id="ts-open">${s.tailscale.state === 'missing' ? 'Get it' : 'Open'}</button>`) : ''}</div>
-        <div class="item"><div class="grow"><b>Public link with Cloudflare</b><div class="s">${{ on:'On · private https link through Cloudflare', missing:'Needs cloudflared (free, installs with Homebrew)', off:'Off · only this Mac can open AgentsEye', starting:'Starting…', restarting:'Reconnecting…' }[t.status] || esc(t.status)}</div></div>
+        <div class="item"><div class="grow"><b>Cloudflare Tunnel</b><div class="s">${{ on:'On · Public HTTPS link', missing:'Requires cloudflared on your Mac.', off:'Off · Create a public HTTPS link', starting:'Starting…', restarting:'Reconnecting…' }[t.status] || esc(t.status)}</div></div>
           ${me.local ? (t.status === 'missing' ? `<button class="small primary" id="install-cf" ${s.installingCloudflared ? 'disabled' : ''}>${s.installingCloudflared ? 'Installing…' : 'Install'}</button>` : `<label class="switch"><input type="checkbox" id="tunnel" ${t.enabled ? 'checked' : ''}><i></i></label>`) : ''}</div>
-        ${s.phoneUrl && me.local ? `<div class="qr"><img src="/api/pair/qr?ts=${s.pairingAt}" alt="QR code to open AgentsEye on your phone"><b>Scan with your phone's camera</b><div class="small muted" style="text-align:center">Then sign in with your password. Scanning skips the approval step; the code works once and expires in 10 minutes.</div><div class="url mono muted">${esc(s.phoneUrl)}</div><button class="small" id="copy">Copy link</button></div>
+        ${t.error && t.status !== 'missing' ? `<div class="connection-error small">${esc(t.error)}</div>` : ''}
+        </div></details>
+        ${s.phoneUrl && me.local ? `<div class="qr"><img src="/api/pair/qr?ts=${s.pairingAt}" alt="QR code to open AgentsEye on your phone"><b>Scan to connect your phone</b><div class="small muted" style="text-align:center">Sign in with your AgentsEye password. This QR code expires in 10 minutes.</div><div class="url mono muted">${esc(s.phoneUrl)}</div><button class="small" id="copy">Copy link</button></div>
           <div class="item"><div class="grow small muted">On iPhone: in Safari tap Share → <b>Add to Home Screen</b>, open AgentsEye from there, then turn on notifications below.</div></div>` : ''}
-        ${!me.local ? `<div class="item"><div class="grow small muted">Connected through ${esc(location.host)}</div></div>` : ''}
-        ${t.error && t.status !== 'missing' ? `<div class="item small" style="color:var(--red)">${esc(t.error)}</div>` : ''}
       </div>`;
     const html = `<div class="top"><h1>Settings</h1><a href="#/guide"><button class="small">Start guide</button></a></div>
       ${isPhone && !standalone() ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Add AgentsEye to your Home Screen</b><div class="small muted">Opens full screen, needed for notifications on iPhone.</div></div><button class="small primary" id="install-s">How</button></div>' : ''}
@@ -1445,6 +1449,7 @@ async function settingsView() {
     view.innerHTML = html;
     $('#install-s')?.addEventListener('click', installSheet);
     bindRelayRow(view, s.relay, () => { shown = ''; render(); });
+    view.querySelectorAll('[data-copy-phone]').forEach(b => b.onclick = () => attempt(() => navigator.clipboard.writeText(b.dataset.copyPhone), 'Link copied'));
     $('#ts')?.addEventListener('change', e => attempt(async () => { await api('/api/tailscale', { on:e.target.checked }); shown = ''; render(); }, e.target.checked ? 'Serving on your tailnet' : 'Stopped'));
     $('#ts-open')?.addEventListener('click', () => attempt(() => api('/api/tailscale/open', {})));
     view.querySelectorAll('[data-awake]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/power/keep-awake', { mode:b.dataset.awake }); shown = ''; render(); }, 'Saved'));
