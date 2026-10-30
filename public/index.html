@@ -12,8 +12,9 @@
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icon-180.png">
   <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+  <meta name="app-version" content="%APP_VERSION%">
   <title>AgentsEye</title>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=%APP_VERSION%">
 </head>
 <body>
   <div id="gate" class="gate" hidden></div>
@@ -28,6 +29,6 @@
   <div id="sheet" class="sheet" hidden><div class="sheet-card" id="sheet-card"></div></div>
   <div id="conn" class="conn" hidden role="status" aria-live="polite"></div>
   <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
-  <script type="module" src="/app.js"></script>
+  <script type="module" src="/app.js?v=%APP_VERSION%"></script>
 </body>
 </html>

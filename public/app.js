@@ -327,7 +327,9 @@ window.addEventListener('hashchange', () => { if (!$('#app').hidden) route(); })
 
 // ---------- Installing as an app ----------
 // Registered before sign-in so the app shell is cached and opens even when the Mac is unreachable.
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+// The offline copy must never pin an old version: check for a new worker on every start, bypassing caches.
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { updateViaCache:'none' }).then(r => r.update()).catch(() => {});
+const APP_VERSION = document.querySelector('meta[name=app-version]')?.content || '';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const isPhone = /iPhone|iPad|iPod|Android/.test(navigator.userAgent);
@@ -441,6 +443,12 @@ function route() {
 async function pollBadges() {
   const b = await api('/api/badges').catch(() => null);
   if (!b) return;
+  // The Mac updated itself: reload once to pick up the new screens.
+  if (b.version && APP_VERSION && b.version !== APP_VERSION && sessionStorage.getItem('reloaded-for') !== b.version) {
+    sessionStorage.setItem('reloaded-for', b.version);
+    location.reload();
+    return;
+  }
   $('#pip-home').textContent = b.needsYou || '';
   $('#pip-settings').textContent = b.devicesWaiting || '';
   document.title = b.needsYou ? `(${b.needsYou}) AgentsEye` : 'AgentsEye';
@@ -1161,7 +1169,8 @@ async function settingsView() {
       <div class="section"><h2>Devices</h2>${s.devices.length > 1 ? '<button class="small ghost" id="others">Sign out others</button>' : ''}</div>
       <div class="group">${s.devices.map(d => `<div class="item"><div class="grow"><b>${esc(d.name)}</b> ${d.id === s.deviceId ? '<span class="chip green">This device</span>' : ''}${d.approved ? '' : '<span class="chip amber">Waiting</span>'}<div class="s">${d.remote ? 'Phone link' : 'On this Mac'} · ${ago(d.lastSeen)}</div></div>
         ${!d.approved && me.local ? `<button class="small good" data-approve="${d.id}">Approve</button>` : ''}${d.id !== s.deviceId ? `<button class="small ghost" data-remove="${d.id}">${d.approved ? 'Sign out' : 'Reject'}</button>` : ''}</div>`).join('')}</div>
-      <div style="margin:28px 0"><button class="bad" id="logout" style="width:100%">Sign out</button></div>`;
+      <div style="margin:28px 0 8px"><button class="bad" id="logout" style="width:100%">Sign out</button></div>
+      <p class="small muted center" style="margin-bottom:28px">AgentsEye ${esc(APP_VERSION)}${s.version?.version && s.version.version !== APP_VERSION ? ` · Mac has ${esc(s.version.version)}` : ''}</p>`;
     if (html === shown) return;
     shown = html;
     view.innerHTML = html;

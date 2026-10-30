@@ -35,6 +35,7 @@ import * as git from './git.js';
 import { hookStatus, installHook, uninstallHook } from './hookinstall.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
+const appVersion = () => readJson(path.join(publicDir, '..', 'package.json'), {}).version || '';
 const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.svg':'image/svg+xml', '.png':'image/png', '.webmanifest':'application/manifest+json' };
 const security = {
   'x-frame-options':'DENY',
@@ -169,7 +170,7 @@ async function dailySummary() {
 }
 
 const routes = {
-  'GET /api/badges':() => ({ needsYou:needsYou(), updates:updateCount(), devicesWaiting:pendingDevices().length }),
+  'GET /api/badges':() => ({ version:appVersion(), needsYou:needsYou(), updates:updateCount(), devicesWaiting:pendingDevices().length }),
   'GET /api/home':async () => {
     const [list, limits] = await Promise.all([allAgents(), usage()]);
     return { agents:list, limits, t3:t3.status(), t3Projects:t3.projects(), approvals:approvals.list().pending, devicesWaiting:pendingDevices(), host:os.hostname().replace(/\.local$/, '') };
@@ -498,7 +499,8 @@ function serveStatic(res, pathname) {
   fs.readFile(file, (error, data) => {
     if (error) return send(res, 404, 'Not found');
     res.writeHead(200, { ...security, 'content-type':types[path.extname(file)] || 'application/octet-stream', 'cache-control':'no-cache' });
-    res.end(data);
+    // The page names its version, and its script and styles carry it, so a phone never mixes old and new files.
+    res.end(file.endsWith('index.html') ? data.toString().replace(/%APP_VERSION%/g, appVersion()) : data);
   });
 }
 
