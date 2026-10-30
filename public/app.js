@@ -541,14 +541,63 @@ async function lockMac() {
 
 // ---------- Limits ----------
 const until = t => { if (!t) return ''; const m = Math.max(0, Math.round((t - Date.now()) / 60000)); if (m < 60) return `${m}m`; const h = Math.floor(m / 60); if (h < 48) return `${h}h ${m % 60}m`; return `${Math.round(h / 24)}d`; };
-const planName = p => String(p || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+const planName = p => String(p || '').replace(/^self[_ ]serve[_ ]/i, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+const windowName = w => ({ five_hour:'5-hour session' }[w.key] || w.label);
+// "9:30 pm" today, "Mon 10:30 am" later.
+function clock(t) {
+  const d = new Date(t);
+  const time = d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
+  return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString([], { weekday:'short' })} ${time}`;
+}
+// Pace compares how much of a limit is used with how much of its window has passed, and warns before it runs out.
+function pace(w) {
+  if (!w.minutes || !w.resetsAt) return null;
+  const span = w.minutes * 60000;
+  const elapsed = Math.min(1, Math.max(0, 1 - (w.resetsAt - Date.now()) / span));
+  const mark = Math.round(elapsed * 100);
+  if (w.percent >= 100) return { cls:'bad', text:'Limit reached', mark };
+  if (elapsed > 0.03 && w.percent >= 5) {
+    const hitAt = Date.now() + (100 - w.percent) / (w.percent / (elapsed * span));
+    if (hitAt < w.resetsAt) return { cls:'bad', text:`Runs out ~${clock(hitAt)}`, mark };
+  }
+  if (w.percent > mark + 10) return { cls:'warn', text:'Ahead of pace', mark };
+  return { cls:'ok', text:w.percent < mark - 15 ? 'Plenty left' : 'On pace', mark };
+}
 function limitsCard(limits = []) {
   const rows = limits.filter(u => u.state !== 'missing');
   if (!rows.length) return '';
-  return `<button class="limits" id="limits" aria-label="Usage limits, tap to refresh">${rows.map(u => `
-    <div class="lim"><div class="lim-head"><span class="avatar mini">${avatar(u.harness, 'open')}</span><b>${esc(harnessName[u.harness])}</b><span class="muted small">${esc(planName(u.plan))}</span>${u.state === 'ok' && !u.live && u.checkedAt ? `<span class="muted small" style="margin-left:auto">as of ${ago(u.checkedAt)}</span>` : ''}</div>
-    ${u.state === 'ok' ? `<div class="bars">${u.windows.map(w => `<div class="lbar"><div class="lbar-top"><span>${esc(w.label)}</span><b class="${w.percent >= 90 ? 'hot' : ''}">${w.percent}%</b></div><div class="meter ${level(w.percent)}"><i style="width:${Math.min(100, w.percent)}%"></i></div><div class="small muted">${w.resetsAt ? `resets in ${until(w.resetsAt)}` : ''}</div></div>`).join('')}</div>`
+  return `<button class="limits" id="limits" aria-label="Usage limits, tap for history">
+    <div class="lim-title"><b>Usage limits</b><span class="small muted">History ›</span></div>
+    ${rows.map(u => `<div class="lim"><div class="lim-head"><span class="avatar mini">${avatar(u.harness, 'open')}</span><b>${esc(harnessName[u.harness])}</b>${u.plan ? `<span class="tag">${esc(planName(u.plan))}</span>` : ''}${u.state === 'ok' && !u.live && u.checkedAt ? `<span class="small muted lim-age">as of ${ago(u.checkedAt)}</span>` : ''}</div>
+      ${u.state === 'ok' ? u.windows.map(w => { const p = pace(w); return `<div class="lrow">
+        <div class="lbar-top"><span>${esc(windowName(w))}</span><b class="${w.percent >= 90 ? 'hot' : ''}">${w.percent}%</b></div>
+        <div class="meter ${level(w.percent)}"><i style="width:${Math.min(100, w.percent)}%"></i>${p && p.mark > 2 && p.mark < 98 ? `<s style="left:${p.mark}%" title="Where even use would be now"></s>` : ''}</div>
+        <div class="lbar-foot"><span class="muted">${w.resetsAt ? `Resets ${clock(w.resetsAt)}` : ''}</span>${p ? `<span class="pace ${p.cls}">${esc(p.text)}</span>` : ''}</div></div>`; }).join('')
       : `<div class="small muted">${esc(u.note || 'Unavailable')}</div>`}</div>`).join('')}</button>`;
+}
+// Tapping the card: a week of each limit, drawn from readings the Mac saves every 10 minutes.
+async function usageSheet(limits) {
+  const history = await api('/api/usage/history').catch(() => ({}));
+  // Short windows show the last day, weekly ones the last week.
+  const chart = (points, w) => {
+    const now = Date.now();
+    const day = w.minutes && w.minutes <= 300;
+    const from = now - (day ? 1 : 7) * 86400000;
+    const pts = points.filter(([t]) => t >= from);
+    if (pts.length < 2) return '<div class="small muted">Not enough readings yet. The chart fills in over the coming days.</div>';
+    const x = t => ((t - from) / (now - from)) * 300;
+    const y = v => 60 - (Math.min(100, v) / 100) * 56;
+    const line = pts.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    return `<svg class="spark" viewBox="0 0 300 64" preserveAspectRatio="none" role="img" aria-label="Usage over the last 7 days"><line x1="0" x2="300" y1="${y(100)}" y2="${y(100)}" class="limit"/><polygon points="${x(pts[0][0]).toFixed(1)},60 ${line} ${x(pts.at(-1)[0]).toFixed(1)},60" class="area"/><polyline points="${line}" class="line"/></svg><div class="spark-axis small muted"><span>${day ? '24 hours' : '7 days'} ago</span><span>now</span></div>`;
+  };
+  sheet(`<h3>Usage limits</h3>
+    ${limits.filter(u => u.state === 'ok').map(u => `<div class="usage-block"><b>${esc(harnessName[u.harness])}</b>${u.windows.map(w => { const p = pace(w); return `<div class="usage-window"><div class="lbar-top"><span>${esc(windowName(w))}</span><b>${w.percent}%</b></div>
+      ${chart(history[`${u.harness}:${w.key}`] || [], w)}
+      <div class="small muted">${w.resetsAt ? `Resets ${clock(w.resetsAt)} (in ${until(w.resetsAt)})` : ''}${p ? ` · <span class="pace ${p.cls}">${esc(p.text)}</span>` : ''}</div></div>`; }).join('')}</div>`).join('')}
+    <p class="small muted">The marker on each bar shows where you'd be using it evenly. Past it, you're using it faster than the window refills.</p>
+    <button id="usage-refresh">Refresh now</button><button class="ghost" data-close>Done</button>`, card => {
+    card.querySelector('#usage-refresh').onclick = () => attempt(async () => { await api('/api/usage?force=1'); closeSheet(); }, 'Refreshed');
+  });
 }
 // Home is one clean list: what needs you, what is working, and what finished recently.
 const agentHref = a => (a.source === 't3' ? `#/t/${encodeURIComponent(a.id)}` : a.source === 'ide' ? `#/i/${a.app}/${encodeURIComponent(a.id)}` : `#/s/${a.harness}/${encodeURIComponent(a.id)}`);
@@ -601,7 +650,7 @@ async function homeView() {
     list.innerHTML = html;
     list.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; paintList(); });
     $('#more')?.addEventListener('click', () => { showAll = !showAll; paintList(); });
-    $('#limits')?.addEventListener('click', () => attempt(async () => { await api('/api/usage?force=1'); shownB = ''; render(); }, 'Refreshed'));
+    $('#limits')?.addEventListener('click', () => usageSheet(data.limits));
   };
   const render = async () => {
     const d = data = await api('/api/home');

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { run } from './exec.js';
-import { HOME } from './paths.js';
+import { HOME, DATA, readJson, writeJson } from './paths.js';
 
 // Usage limits, read the way each CLI reads them:
 // - Claude Code: its OAuth usage endpoint, with the token Claude Code keeps in the macOS Keychain (live, exact).
@@ -38,14 +38,15 @@ const windowLabel = minutes => (minutes <= 300 ? `${Math.round(minutes / 60)}-ho
 
 export function parseClaude(body) {
   const windows = [];
-  const add = (key, label) => {
+  // Each window carries its length, so the phone can tell whether usage is ahead of the clock.
+  const add = (key, label, minutes) => {
     const w = body?.[key];
-    if (w && typeof w.utilization === 'number') windows.push({ key, label, percent:Math.round(w.utilization), resetsAt:w.resets_at ? Date.parse(w.resets_at) : null });
+    if (w && typeof w.utilization === 'number') windows.push({ key, label, minutes, percent:Math.round(w.utilization), resetsAt:w.resets_at ? Date.parse(w.resets_at) : null });
   };
-  add('five_hour', 'Session (5-hour)');
-  add('seven_day', 'Weekly');
-  add('seven_day_opus', 'Weekly · Opus');
-  add('seven_day_sonnet', 'Weekly · Sonnet');
+  add('five_hour', 'Session (5-hour)', 300);
+  add('seven_day', 'Weekly', 10080);
+  add('seven_day_opus', 'Weekly · Opus', 10080);
+  add('seven_day_sonnet', 'Weekly · Sonnet', 10080);
   return windows;
 }
 
@@ -61,7 +62,7 @@ async function claude() {
 export function parseCodexRateLimits(rl) {
   if (!rl) return [];
   return ['primary', 'secondary'].map(k => rl[k]).filter(w => w && typeof w.used_percent === 'number')
-    .map(w => ({ key:String(w.window_minutes), label:windowLabel(w.window_minutes || 0), percent:Math.round(w.used_percent), resetsAt:w.resets_at ? w.resets_at * 1000 : null }))
+    .map(w => ({ key:String(w.window_minutes), label:windowLabel(w.window_minutes || 0), minutes:w.window_minutes || 0, percent:Math.round(w.used_percent), resetsAt:w.resets_at ? w.resets_at * 1000 : null }))
     .sort((a, b) => Number(a.key) - Number(b.key));
 }
 
@@ -102,6 +103,23 @@ async function codex() {
   return { harness:'codex', state:'unknown', note:'No usage reported yet. It appears after your next Codex request.' };
 }
 
+// A week of readings, at most one every 10 minutes per limit, for the history chart on the phone.
+const historyFile = path.join(DATA, 'usage-history.json');
+let history = null;
+export function record(list, now = Date.now()) {
+  history ??= readJson(historyFile, {});
+  let changed = false;
+  for (const u of list) for (const w of u.state === 'ok' ? u.windows : []) {
+    const points = history[`${u.harness}:${w.key}`] ??= [];
+    if (now - (points.at(-1)?.[0] || 0) < 600000) continue;
+    points.push([now, w.percent]);
+    while (points.length && points[0][0] < now - 8 * 86400000) points.shift();
+    changed = true;
+  }
+  if (changed) writeJson(historyFile, history);
+}
+export const usageHistory = () => (history ??= readJson(historyFile, {}));
+
 export async function usage({ force = false } = {}) {
   const ttl = { claude:60000, codex:15000 };
   const out = await Promise.all(Object.entries({ claude, codex }).map(async ([key, fn]) => {
@@ -111,5 +129,6 @@ export async function usage({ force = false } = {}) {
     cache[key] = { at:Date.now(), value };
     return value;
   }));
+  record(out);
   return out;
 }

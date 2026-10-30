@@ -28,7 +28,7 @@ import * as push from './push.js';
 import * as watcher from './watcher.js';
 import { recentFiles, safePath, mime } from './files.js';
 import { rename } from './names.js';
-import { usage } from './usage.js';
+import { usage, usageHistory } from './usage.js';
 import * as ides from './ides.js';
 import * as queue from './queue.js';
 import * as git from './git.js';
@@ -251,6 +251,7 @@ const routes = {
   },
   'GET /api/agents/new':(_, url) => agents.findNew(url.searchParams.get('harness'), url.searchParams.get('cwd') || '', Number(url.searchParams.get('since')) || 0, url.searchParams.get('id') || ''),
   'GET /api/usage':(_, url) => usage({ force:url.searchParams.get('force') === '1' }),
+  'GET /api/usage/history':() => usageHistory(),
 
   'GET /api/processes':() => system.processes(),
   'POST /api/processes/kill':async b => { system.killProcess(b.pid, b.force ? 'SIGKILL' : 'SIGTERM'); return { ok:true }; },
