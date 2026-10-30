@@ -159,8 +159,23 @@ async function attempt(fn, ok) {
 }
 
 // ---------- Loading and error screens ----------
-const skeleton = (rows = 4, kind = 'row') => `<div class="skeleton" aria-busy="true" aria-label="Loading">${Array.from({ length:rows }, () => `<div class="sk ${kind}"></div>`).join('')}</div>`;
-const skeletonHome = () => `<div class="top"><h1>AgentsEye</h1></div>${skeleton(1, 'block')}<div class="section"><div class="sk line"></div></div><div class="live">${skeleton(4, 'card').replace(/^<div class="skeleton"[^>]*>|<\/div>$/g, '')}</div>${skeleton(3)}`;
+// Decorative placeholders share the real content's spacing and stay out of the accessibility tree.
+const skLine = (width = '100%', cls = '') => `<span class="sk sk-line ${cls}" style="width:${width}"></span>`;
+const skText = (width = '68%') => `<div class="sk-text">${skLine(width)}${skLine('45%', 'sk-caption')}</div>`;
+const skRow = i => `<div class="sk-row"><span class="sk sk-avatar"></span>${skText(['68%', '82%', '56%'][i % 3])}<span class="sk sk-meta"></span></div>`;
+const skWrap = (html, label = 'Loading') => `<div class="skeleton" role="status" aria-label="${label}"><span class="sr-only">${label}</span><div aria-hidden="true">${html}</div></div>`;
+const skSection = () => `<div class="section">${skLine('112px', 'sk-heading')}</div>`;
+const skeleton = (rows = 4, kind = 'row') => {
+  if (kind === 'bubble') return skWrap(`<div class="sk-chat">${Array.from({ length:rows }, (_, i) => `<div class="sk-message ${i % 2 ? 'sk-reply' : ''}">${skLine(i % 2 ? '86%' : '64%')}${skLine('100%')}${i % 2 ? '' : skLine('78%')}${skLine('48px', 'sk-caption')}</div>`).join('')}</div>`, 'Loading conversation');
+  if (kind === 'terminal') return skWrap(`<div class="sk-terminal">${Array.from({ length:9 }, (_, i) => skLine(['60%', '84%', '38%', '72%'][i % 4])).join('')}</div>`, 'Loading terminal');
+  if (kind === 'guide') return skWrap(`<div class="sk-guide">${Array.from({ length:rows }, () => `<div class="sk-step"><span class="sk sk-number"></span><div class="sk-text">${skLine('58%')}${skLine('100%', 'sk-caption')}${skLine('82%', 'sk-caption')}<span class="sk sk-action"></span></div></div>`).join('')}</div>`, 'Loading start guide');
+  return skWrap(`<div class="agents">${Array.from({ length:rows }, (_, i) => skRow(i)).join('')}</div>`, 'Loading items');
+};
+const skeletonHome = () => skWrap(`<div class="top"><h1>Agents</h1><span class="sk sk-host"></span></div>${skSection()}<div class="agents">${[0, 1, 2].map(skRow).join('')}</div>${skSection()}<div class="agents">${[0, 1, 2, 3].map(skRow).join('')}</div>`, 'Loading agents');
+const skeletonSettings = () => {
+  const group = n => `${skSection()}<div class="group">${Array.from({ length:n }, (_, i) => `<div class="item">${skText(i % 2 ? '58%' : '72%')}<span class="sk sk-toggle"></span></div>`).join('')}</div>`;
+  return skWrap(`<div class="top"><h1>Settings</h1><span class="sk sk-action"></span></div><div class="mac-card"><div class="mc-top"><span class="sk sk-avatar"></span>${skText('60%')}<span class="sk sk-meta"></span></div><span class="sk sk-lock"></span>${skLine('76%', 'sk-caption')}</div>${me.local ? group(3) : ''}${group(3)}${group(2)}${group(2)}`, 'Loading settings');
+};
 // Shown when the app opens and the Mac can't be reached: when it was last seen, the usual reasons, and a retry.
 function offlineScreen() {
   const last = Number(localStorage.getItem('last-ok')) || 0;
@@ -182,14 +197,15 @@ function errorPanel(e, retry) {
 }
 // Runs a screen's first load: skeleton until data arrives, a retryable error panel if it fails.
 async function firstLoad(box, load, skel = skeleton()) {
+  const screen = location.hash;
   box.innerHTML = skel;
   try { await load(); }
   catch (e) {
-    if (e.kind === 'auth') return;
+    if (e.kind === 'auth' || !box.isConnected || location.hash !== screen) return;
     box.innerHTML = errorPanel(e);
     box.querySelector('[data-retry]').onclick = () => firstLoad(box, load, skel);
     // Come back by itself once the Mac is reachable again.
-    const wait = setInterval(() => { if (online && box.isConnected && box.querySelector('[data-retry]')) { clearInterval(wait); firstLoad(box, load, skel); } else if (!box.isConnected) clearInterval(wait); }, 3000);
+    const wait = setInterval(() => { if (!box.isConnected || location.hash !== screen) { clearInterval(wait); return; } if (online && box.querySelector('[data-retry]')) { clearInterval(wait); firstLoad(box, load, skel); } }, 3000);
   }
 }
 
@@ -463,7 +479,7 @@ async function guideView() {
     }));
     $('#hide-guide')?.addEventListener('click', () => { localStorage.setItem('guide-hidden', '1'); location.hash = '#/'; });
   };
-  await firstLoad(view, render, `<div class="top"><h1>Start guide</h1></div>${skeleton(7)}`);
+  await firstLoad(view, render, `<div class="top"><h1>Start guide</h1></div>${skeleton(7, 'guide')}`);
   every(5000, () => render().catch(() => {}));
 }
 
@@ -1219,7 +1235,7 @@ async function sessionView(harness, id) {
     $('#s-tabs').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
     lastPane = '';
     foot.dataset.key = '';
-    pane.innerHTML = skeleton(4, tab === 'chat' ? 'bubble' : 'row');
+    pane.innerHTML = skeleton(4, tab === 'chat' ? 'bubble' : tab === 'terminal' ? 'terminal' : 'row');
     draw(true).catch(e => sessionError(pane, e, () => draw(true)));
   };
 
@@ -1454,7 +1470,7 @@ async function settingsView() {
     view.querySelectorAll('[data-remove]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/remove', { id:b.dataset.remove }); render(); }));
     $('#logout').onclick = async () => { await disablePush().catch(() => {}); await api('/api/auth/logout', {}); forgetKey(); forgetPhone(); gate(); };
   };
-  await firstLoad(view, render, `<div class="top"><h1>Settings</h1></div>${skeleton(4, 'block')}`);
+  await firstLoad(view, render, skeletonSettings());
   every(5000, () => render().catch(() => {}));
 }
 
