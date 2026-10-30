@@ -1,6 +1,6 @@
 # AgentsEye relay
 
-Lets your phone reach AgentsEye on a Mac that can't accept incoming connections — company laptops behind a proxy,
+Lets your phone reach AgentsEye on a Mac that can't accept incoming connections, including company laptops behind a proxy,
 Macs where you can't install anything, any network. The Mac opens one outbound HTTPS/WebSocket connection to the
 relay; the phone talks to the relay; the relay passes requests along.
 
@@ -19,6 +19,8 @@ your password. Use this relay, one your team runs, or your own (it's free).
 
 ## Deploy to Cloudflare (free)
 
+To distribute your own fork, set `REPO` in `relay/wrangler.toml` to your GitHub `owner/repository` before deploying. Otherwise the installer downloads the default AgentsEye repository. Choose a unique Worker name if needed.
+
 ```bash
 cd relay
 npm install
@@ -26,8 +28,7 @@ npx wrangler login        # opens a browser once
 npx wrangler deploy       # → https://agentseye-relay.<your-account>.workers.dev
 ```
 
-Then on the Mac: **AgentsEye → Settings → AgentsEye relay**, paste that address, enter your password once, switch it on,
-and scan the QR code with your phone.
+Then on the Mac, open **Settings → Phone access → Relay settings**, paste the relay address, and enter your AgentsEye password if asked. Turn on the relay, then scan the QR code with your phone. If it is already on, toggle it off and on to apply the new address.
 
 Each Mac gets its own Durable Object. The first connection for a Mac id registers a hash of its secret; nobody
 else can claim that id afterwards.
