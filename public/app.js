@@ -88,19 +88,29 @@ async function transport(path, body, signal) {
   return { status:reply.status, data:null, blob:new Blob([bytes], { type:reply.type }), disposition:reply.disposition };
 }
 
-async function api(path, body, { timeout = body === undefined ? 15000 : 30000 } = {}) {
+// A blip (the phone waking up, the Mac's link to the relay redialling) usually clears within seconds, so reads
+// are tried once more before the app says the Mac is unreachable.
+async function api(path, body, opts = {}) {
+  try { return await apiOnce(path, body, opts); }
+  catch (e) {
+    if (body !== undefined || e.kind !== 'offline' || opts.retried) throw e;
+    await new Promise(r => setTimeout(r, 2500));
+    return apiOnce(path, body, { ...opts, retried:true });
+  }
+}
+async function apiOnce(path, body, { timeout = body === undefined ? 15000 : 30000, retried = false } = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
   let res;
   try { res = await transport(path, body, ctrl.signal); }
   catch (e) {
     if (e instanceof ApiError) throw e;
-    connection(false);
+    if (retried || body !== undefined) connection(false);
     throw new ApiError(e.name === 'AbortError' ? 'Your Mac is taking too long to answer.' : offlineMessage, e.name === 'AbortError' ? 'timeout' : 'offline');
   } finally { clearTimeout(timer); }
   const data = res.data;
   // Tunnels and relays answer with a plain error page when the Mac side is gone.
-  if (!data && !res.blob && res.status >= 500) { connection(false); throw new ApiError(offlineMessage, 'offline', res.status); }
+  if (!data && !res.blob && res.status >= 500) { if (retried || body !== undefined) connection(false); throw new ApiError(offlineMessage, 'offline', res.status); }
   connection(true);
   if (res.blob) return res;
   if ((res.status === 401 || res.status === 423) && !path.startsWith('/api/auth/')) { gate(); throw new ApiError('Signed out', 'auth', res.status); }

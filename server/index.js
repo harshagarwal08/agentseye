@@ -591,7 +591,7 @@ export function main() {
   watcher.start();
   tunnel.boot();
   tailscale.boot();
-  power.apply();
+  power.apply().catch(() => {});
   createServer().listen(PORT, '127.0.0.1', () => console.log(`AgentsEye running at http://localhost:${PORT}`));
   relay.boot(PORT);
   t3.boot();

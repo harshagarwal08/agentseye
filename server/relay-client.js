@@ -68,6 +68,7 @@ function connect() {
     let m;
     try { m = JSON.parse(event.data); } catch { return; }
     if (m.t === 'welcome') {
+      if (state.retries) console.log(`${new Date().toISOString()} relay: connected`);
       state.status = 'on';
       state.error = '';
       state.retries = 0;
@@ -77,13 +78,14 @@ function connect() {
       // a proxy dropping it), which never fires "close", so drop it and dial again.
       state.heardAt = Date.now();
       state.ping = setInterval(() => {
-        if (Date.now() - state.heardAt > 50000) { if (state.socket === ws) { state.socket = null; clearInterval(state.ping); try { ws.close(); } catch {} retry(); } return; }
+        if (Date.now() - state.heardAt > 50000) { if (state.socket === ws) { console.log(`${new Date().toISOString()} relay: no answer for 50s, reconnecting`); state.socket = null; clearInterval(state.ping); try { ws.close(); } catch {} retry(); } return; }
         try { ws.send('{"t":"ping"}'); } catch {}
       }, 15000);
     } else if (m.t === 'req') handle(ws, m);
   });
   ws.addEventListener('close', event => {
     if (state.socket !== ws) return;
+    console.log(`${new Date().toISOString()} relay: disconnected (${event.code}${event.reason ? ` ${event.reason}` : ''}), reconnecting`);
     state.socket = null;
     clearInterval(state.ping);
     if (event.code === 4003) { state.status = 'error'; state.error = 'The relay refused this Mac (its id belongs to another secret).'; return; }

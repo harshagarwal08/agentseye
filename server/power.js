@@ -4,29 +4,37 @@ import { run } from './exec.js';
 import { DATA, readJson, writeJson } from './paths.js';
 
 // Keeping agents alive while you are away:
-// - Keep awake: AgentsEye holds a `caffeinate` assertion, so idle sleep never stops your agents. The display may
+// - Keep awake: AgentsEye holds a `caffeinate -i` assertion, so idle sleep never stops your agents. (`-s` alone
+//   isn't enough: macOS still drops into dark wake on idle, which pauses agents and the relay link.) The display may
 //   still turn off (and lock); macOS still sleeps when the lid closes.
 // - Lid closed: macOS only keeps running with the lid shut if sleep is disabled system-wide (`pmset disablesleep`).
 //   That needs an administrator password, so it can only be switched on the Mac itself.
 const file = path.join(DATA, 'power.json');
 let caffeinate = null;
+let watch = null;
 
 export const settings = () => ({ keepAwake:'plugged', ...readJson(file, {}) });
+const onPower = async () => /AC Power/.test((await run('/usr/bin/pmset', ['-g', 'ps'])).stdout);
 
-export function apply() {
+// "When plugged in" follows the charger: checked every 30 seconds, held only while on power.
+export async function apply() {
   const mode = settings().keepAwake;
+  const want = mode === 'always' || (mode === 'plugged' && await onPower());
+  if (mode === 'plugged') watch ||= setInterval(() => apply().catch(() => {}), 30000).unref();
+  else { clearInterval(watch); watch = null; }
+  if (want === Boolean(caffeinate)) return;
   caffeinate?.kill();
   caffeinate = null;
-  if (mode === 'off') return;
-  // -s holds the system awake only on AC power; -i also covers battery.
-  caffeinate = spawn('/usr/bin/caffeinate', mode === 'always' ? ['-i', '-s', '-w', String(process.pid)] : ['-s', '-w', String(process.pid)], { stdio:'ignore' });
-  caffeinate.on('exit', () => { caffeinate = null; });
+  if (!want) return;
+  const proc = spawn('/usr/bin/caffeinate', ['-i', '-s', '-w', String(process.pid)], { stdio:'ignore' });
+  proc.on('exit', () => { if (caffeinate === proc) caffeinate = null; });
+  caffeinate = proc;
 }
 
-export function setKeepAwake(mode) {
+export async function setKeepAwake(mode) {
   if (!['off', 'plugged', 'always'].includes(mode)) throw Object.assign(new Error('Unknown mode.'), { status:400 });
   writeJson(file, { ...settings(), keepAwake:mode });
-  apply();
+  await apply();
   return status();
 }
 
