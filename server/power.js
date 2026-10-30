@@ -63,4 +63,13 @@ export async function setLidClosed(on) {
   return status();
 }
 
+// The Mac's battery, from `pmset -g batt`: null on Macs without one.
+export function parseBattery(text) {
+  const m = String(text).match(/(\d+)%;\s*([^;]+);\s*(?:(\d+:\d+) remaining)?/);
+  if (!m) return null;
+  const state = m[2].trim();
+  return { percent:Number(m[1]), plugged:/AC Power/.test(text), charging:state === 'charging', remaining:m[3] && m[3] !== '0:00' ? m[3] : '' };
+}
+export async function battery() { return parseBattery((await run('/usr/bin/pmset', ['-g', 'batt'])).stdout); }
+
 export async function sleepNow() { await run('/usr/bin/pmset', ['sleepnow']); }

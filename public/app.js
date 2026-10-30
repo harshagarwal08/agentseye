@@ -630,6 +630,9 @@ const agentState = a => (a.status === 'waiting' ? 'waiting' : a.status === 'busy
 // Text boxes grow with what you type, up to about six lines.
 const grow = ta => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; };
 
+// The Mac's battery next to its name: ⚡ on the charger, red when low and draining.
+const batteryHtml = b => (b ? `<span class="batt${!b.plugged && b.percent <= 20 ? ' low' : ''}" title="${b.plugged ? (b.charging ? 'Charging' : 'On power') : `On battery${b.remaining ? `, ${b.remaining} left` : ''}`}">${b.plugged ? '⚡' : '🔋'}${b.percent}%</span>` : '');
+
 // Where an agent runs on the Mac: Terminal, VS Code, Cursor, T3 Code, the Claude or Codex app…
 const appLabel = a => (a.source === 't3' ? 'T3 Code' : a.source === 'ide' ? { cursor:'Cursor', vscode:'VS Code', gemini:'Terminal' }[a.app] || ''
   : a.app || (['claude-vscode', 'codex-vscode'].includes(a.entrypoint) ? 'VS Code' : 'Terminal'));
@@ -686,7 +689,7 @@ async function homeView() {
     const d = data = await api('/api/home');
     rememberMac(d.host);
     const html = `
-      <div class="top"><h1>Agents</h1>${macs().length > 1 ? `<button class="mac mac-switch" id="mac-switch"><span class="dot green"></span>${esc(d.host)} ▾</button>` : `<span class="mac"><span class="dot green"></span>${esc(d.host)}</span>`}</div>
+      <div class="top"><h1>Agents</h1>${macs().length > 1 ? `<button class="mac mac-switch" id="mac-switch"><span class="dot green"></span>${esc(d.host)}${batteryHtml(d.battery)} ▾</button>` : `<span class="mac"><span class="dot green"></span>${esc(d.host)}${batteryHtml(d.battery)}</span>`}</div>
       ${isPhone && !standalone() && !localStorage.getItem('install-hidden') ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Get the app</b><div class="small muted">Add to your Home Screen for full screen and notifications.</div></div><button class="small primary" id="install">Add</button><button class="ghost small" id="install-x" aria-label="Dismiss">✕</button></div>' : ''}
       ${guideCard()}
       ${d.devicesWaiting.map(dev => `<div class="banner"><div class="grow"><b>${esc(dev.name)}</b> wants to sign in<div class="small muted">${ago(dev.createdAt)}${me.local ? '' : ' · approve it on the Mac'}</div></div>${me.local ? `<button class="good small" data-approve="${dev.id}">Approve</button><button class="ghost small" data-reject="${dev.id}">✕</button>` : ''}</div>`).join('')}

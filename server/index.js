@@ -175,7 +175,7 @@ const routes = {
   'GET /api/badges':() => ({ version:appVersion(), needsYou:needsYou(), updates:updateCount(), devicesWaiting:pendingDevices().length }),
   'GET /api/home':async () => {
     const [list, limits] = await Promise.all([allAgents(), usage()]);
-    return { agents:list, limits, t3:t3.status(), t3Projects:t3.projects(), approvals:approvals.list().pending, devicesWaiting:pendingDevices(), host:os.hostname().replace(/\.local$/, '') };
+    return { agents:list, limits, t3:t3.status(), t3Projects:t3.projects(), approvals:approvals.list().pending, devicesWaiting:pendingDevices(), host:os.hostname().replace(/\.local$/, ''), battery:await power.battery().catch(() => null) };
   },
 
   'GET /api/session':async (_, url) => {

@@ -144,3 +144,11 @@ test('each session is traced to the Mac app it runs in', () => {
   ]);
   assert.deepEqual([12, 22, 33, 41, 51, 61].map(pid => hostApp(procs, pid)), ['T3 Code', 'VS Code', 'Terminal', 'Cursor', 'Claude Desktop', '']);
 });
+
+test('the Mac battery is read from pmset', async () => {
+  const { parseBattery } = await import('../server/power.js');
+  assert.deepEqual(parseBattery("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t83%; discharging; 4:12 remaining present: true"), { percent:83, plugged:false, charging:false, remaining:'4:12' });
+  assert.deepEqual(parseBattery("Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t57%; charging; 1:05 remaining present: true"), { percent:57, plugged:true, charging:true, remaining:'1:05' });
+  assert.deepEqual(parseBattery("Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged; 0:00 remaining present: true"), { percent:100, plugged:true, charging:false, remaining:'' });
+  assert.equal(parseBattery("Now drawing from 'AC Power'"), null);
+});

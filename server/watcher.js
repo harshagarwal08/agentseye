@@ -6,6 +6,7 @@ import * as push from './push.js';
 import { usage, runsOutAt } from './usage.js';
 import * as t3 from './t3.js';
 import * as ides from './ides.js';
+import * as power from './power.js';
 
 const clip = (text, n = 140) => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
@@ -109,5 +110,17 @@ export function start() {
     const what = r.input?.command || r.input?.file_path || r.input?.url || '';
     describe(r.sessionId, r.cwd).then(d => push.notify({ title:`✋ ${d.title}`, body:clip(`Allow ${r.tool}? ${what}`, 160), url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` }));
   });
+  // A Mac on battery stops every agent when it dies: warn at 20% and again at 10%, once per discharge.
+  let warnedAt = 101;
+  setInterval(async () => {
+    const b = await power.battery().catch(() => null);
+    if (!b) return;
+    if (b.plugged) { warnedAt = 101; return; }
+    const level = [10, 20].find(l => b.percent <= l && l < warnedAt);
+    if (!level) return;
+    warnedAt = level;
+    push.notify({ title:`🪫 Mac battery at ${b.percent}%`, body:`Plug it in, or your agents stop when it runs out${b.remaining ? ` (about ${b.remaining.replace(':', 'h ')}m left)` : ''}.`, url:'/#/', tag:'battery' });
+  }, 60000).unref();
+
   auth.onDeviceWaiting(d => push.notify({ title:'New device wants to sign in', body:`${d.name}. Approve it on your Mac if this was you.`, url:'/#/settings', tag:`device-${d.id}` }));
 }
