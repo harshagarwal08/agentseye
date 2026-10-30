@@ -1,7 +1,7 @@
 // The app shell (HTML, CSS, scripts, icons) is cached so AgentsEye opens instantly from the Home Screen and can
 // show "Can't reach your Mac" offline. It is network-first, so a new version shows up on the next open.
 // Live data (/api) is never cached.
-const SHELL = 'agentseye-shell-v5';
+const SHELL = 'agentseye-shell-v6';
 const FILES = ['/', '/index.html', '/style.css', '/app.js', '/avatars.js', '/markdown.js', '/e2e.js', '/icon.svg', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', event => {
@@ -15,8 +15,11 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/hook/')) return;
   const key = event.request.mode === 'navigate' ? '/' : url.pathname;
   // Always ask the Mac first and skip the browser's own cache, so a new version shows on the next open.
-  event.respondWith(fetch(event.request, { cache:'no-store' }).then(res => {
-    if (res.ok && (FILES.includes(key) || event.request.mode === 'navigate')) caches.open(SHELL).then(c => c.put(key, res.clone()));
+  event.respondWith(fetch(event.request, { cache:'no-store' }).then(async res => {
+    // The relay answers 503 while the Mac is offline; open the saved app instead, which shows a proper offline screen.
+    if (res.status >= 502) return (await caches.match(key)) || res;
+    // Copy now: by the time the cache opens, the page will have read the original.
+    if (res.ok && (FILES.includes(key) || event.request.mode === 'navigate')) { const copy = res.clone(); caches.open(SHELL).then(c => c.put(key, copy)); }
     return res;
   }).catch(() => caches.match(key).then(hit => hit || Response.error())));
 });

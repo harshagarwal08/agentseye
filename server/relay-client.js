@@ -12,7 +12,7 @@ const CHUNK = 192 * 1024;
 const HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'content-length']);
 const base32 = bytes => [...bytes].map(b => 'abcdefghijklmnopqrstuvwxyz234567'[b & 31]).join('');
 
-const state = { status:'off', error:'', socket:null, retries:0, timer:null, ping:null, port:PORT };
+const state = { status:'off', error:'', socket:null, retries:0, timer:null, ping:null, port:PORT, heardAt:0 };
 
 export function settings() {
   let s = readJson(file, null);
@@ -64,6 +64,7 @@ function connect() {
   state.socket = ws;
   ws.addEventListener('open', () => ws.send(JSON.stringify({ t:'hello', mac:s.macId, secret:s.secret })));
   ws.addEventListener('message', event => {
+    state.heardAt = Date.now();
     let m;
     try { m = JSON.parse(event.data); } catch { return; }
     if (m.t === 'welcome') {
@@ -72,7 +73,13 @@ function connect() {
       state.retries = 0;
       clearInterval(state.ping);
       // Proxies and platforms drop quiet sockets; a small ping keeps the line open.
-      state.ping = setInterval(() => { try { ws.send('{"t":"ping"}'); } catch {} }, 20000);
+      // The relay answers every ping. Silence for 50 seconds means the line died quietly (Wi-Fi change, sleep,
+      // a proxy dropping it), which never fires "close", so drop it and dial again.
+      state.heardAt = Date.now();
+      state.ping = setInterval(() => {
+        if (Date.now() - state.heardAt > 50000) { if (state.socket === ws) { state.socket = null; clearInterval(state.ping); try { ws.close(); } catch {} retry(); } return; }
+        try { ws.send('{"t":"ping"}'); } catch {}
+      }, 15000);
     } else if (m.t === 'req') handle(ws, m);
   });
   ws.addEventListener('close', event => {
@@ -88,7 +95,7 @@ function connect() {
 function retry() {
   if (!settings().enabled) return;
   state.status = 'connecting';
-  const delay = Math.min(30000, 1000 * 2 ** state.retries++);
+  const delay = Math.min(10000, 1000 * 2 ** state.retries++);
   clearTimeout(state.timer);
   state.timer = setTimeout(connect, delay);
 }

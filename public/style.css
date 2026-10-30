@@ -380,3 +380,17 @@ button.primary.busy::after, button.good.busy::after, .send.busy::after { border-
 .foot .composer textarea::placeholder { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .foot .composer .clip { align-self:center; margin:0; }
 .foot .composer .bar { align-self:flex-end; }
+/* Offline screen */
+.box.offline { text-align:left; max-width:380px; }
+.box.offline h1, .box.offline > p { text-align:center; }
+.offline-icon { position:relative; width:84px; margin:0 auto 4px; }
+.offline-icon img { width:84px; height:84px; filter:grayscale(1); opacity:.55; }
+.offline-icon .zz { position:absolute; right:-14px; top:-8px; font-weight:800; font-size:20px; color:var(--muted); animation:zz 2.4s ease-in-out infinite; }
+.offline-icon .zz i { font-size:14px; font-style:normal; margin-left:1px; vertical-align:super; }
+@keyframes zz { 0%,100% { opacity:.3; transform:translateY(2px); } 50% { opacity:1; transform:translateY(-3px); } }
+.checks { list-style:none; padding:0; margin:18px 0; display:grid; gap:10px; }
+.checks li { display:flex; gap:12px; align-items:flex-start; background:var(--card); border-radius:14px; padding:12px 14px; }
+.checks li > span { font-size:20px; line-height:1.2; }
+.box.offline > p.small { text-align:center; }
+.checks li div { text-align:left; }
+.box.offline button { width:100%; }

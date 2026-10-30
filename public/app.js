@@ -97,6 +97,7 @@ async function api(path, body, { timeout = body === undefined ? 15000 : 30000 } 
 let online = true;
 let offlineSince = 0;
 function connection(ok) {
+  if (ok) localStorage.setItem('last-ok', String(Date.now()));
   if (ok === online) return;
   online = ok;
   offlineSince = ok ? 0 : Date.now();
@@ -135,6 +136,20 @@ async function attempt(fn, ok) {
 // ---------- Loading and error screens ----------
 const skeleton = (rows = 4, kind = 'row') => `<div class="skeleton" aria-busy="true" aria-label="Loading">${Array.from({ length:rows }, () => `<div class="sk ${kind}"></div>`).join('')}</div>`;
 const skeletonHome = () => `<div class="top"><h1>AgentsEye</h1></div>${skeleton(1, 'block')}<div class="section"><div class="sk line"></div></div><div class="live">${skeleton(4, 'card').replace(/^<div class="skeleton"[^>]*>|<\/div>$/g, '')}</div>${skeleton(3)}`;
+// Shown when the app opens and the Mac can't be reached: when it was last seen, the usual reasons, and a retry.
+function offlineScreen() {
+  const last = Number(localStorage.getItem('last-ok')) || 0;
+  return `<div class="box offline"><div class="offline-icon"><img src="/icon.svg" alt=""><span class="zz">z<i>z</i></span></div>
+    <h1>Your Mac is offline</h1>
+    <p class="muted">${last ? `Last connected ${ago(last)}.` : 'AgentsEye on your Mac isn\'t connected right now.'}</p>
+    <ul class="checks">
+      <li><span>💤</span><div><b>Asleep or lid closed?</b><div class="small muted">Wake it. Settings → Keep your Mac awake stops this happening.</div></div></li>
+      <li><span>📶</span><div><b>No internet?</b><div class="small muted">Check the Mac's Wi-Fi or network.</div></div></li>
+      <li><span>🔄</span><div><b>Just updated or restarted?</b><div class="small muted">AgentsEye reconnects on its own within a few seconds.</div></div></li>
+    </ul>
+    <p class="small muted"><span class="spin"></span> Checking again every few seconds</p>
+    <button class="primary" id="retry-gate">Try now</button></div>`;
+}
 function errorPanel(e, retry) {
   const icon = { offline:'📡', timeout:'⏳', server:'⚠️' }[e?.kind] || '⚠️';
   const hint = { offline:'AgentsEye will keep trying. Check that your Mac is awake and online.', timeout:'It may be busy. Try again in a moment.' }[e?.kind] || '';
@@ -193,8 +208,9 @@ async function gate() {
     // Signed-in phones keep their screen and just show the reconnecting pill; only a cold start lands here.
     if (!$('#app').hidden) { connection(false); gateTimer = setTimeout(gate, 3000); return; }
     g.hidden = false;
-    g.innerHTML = `<div class="box"><img src="/icon.svg" alt=""><h1>Can't reach your Mac</h1><p>Make sure it's awake and connected to the internet. If you use the phone link, AgentsEye may be restarting its connection.</p><p class="small muted"><span class="spin"></span> Trying again…</p><button class="primary" id="retry-gate">Try now</button></div>`;
-    $('#retry-gate').onclick = gate;
+    g.innerHTML = offlineScreen();
+    $('#conn').hidden = true;
+    $('#retry-gate').onclick = () => attempt(gate);
     gateTimer = setTimeout(gate, 4000);
     return;
   }

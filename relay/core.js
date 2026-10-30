@@ -22,9 +22,27 @@ export async function sha256(text) {
 // Request headers worth passing on; hop-by-hop and proxy headers are dropped.
 const FORWARD = ['accept', 'accept-language', 'content-type', 'cookie', 'if-none-match', 'if-modified-since', 'range', 'user-agent', 'x-agentseye'];
 
-const offlinePage = `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>AgentsEye</title>
-<body style="font:16px -apple-system,system-ui,sans-serif;background:#f6f1e7;color:#2b2620;display:grid;place-items:center;min-height:100vh;margin:0;text-align:center;padding:24px">
-<div><h1 style="margin:0 0 8px">Can't reach your Mac</h1><p style="color:#857c6e">AgentsEye on your Mac isn't connected to the relay right now.<br>Check that the Mac is awake and online.</p><p style="color:#857c6e;font-size:13px">This page retries every few seconds.</p></div>
+const offlinePage = () => `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AgentsEye · Mac offline</title>
+<meta name="color-scheme" content="light dark">
+<style>
+:root{--bg:#f6f1e7;--card:#fffdf8;--ink:#2b2620;--muted:#857c6e}
+@media (prefers-color-scheme:dark){:root{--bg:#16130f;--card:#211d18;--ink:#efe8db;--muted:#9d9384}}
+body{margin:0;font:16px/1.45 -apple-system,system-ui,sans-serif;background:var(--bg);color:var(--ink);display:grid;place-items:center;min-height:100vh;padding:24px;box-sizing:border-box}
+main{max-width:380px;width:100%}
+.icon{position:relative;width:84px;margin:0 auto 6px}.icon svg{width:84px;height:84px;filter:grayscale(1);opacity:.55}
+.zz{position:absolute;right:-14px;top:-8px;font-weight:800;font-size:20px;color:var(--muted);animation:z 2.4s ease-in-out infinite}
+@keyframes z{0%,100%{opacity:.3;transform:translateY(2px)}50%{opacity:1;transform:translateY(-3px)}}
+h1{text-align:center;margin:8px 0 4px;font-size:26px}p{text-align:center;color:var(--muted);margin:0}
+ul{list-style:none;padding:0;margin:20px 0;display:grid;gap:10px}
+li{display:flex;gap:12px;background:var(--card);border-radius:14px;padding:12px 14px}li span{font-size:20px}li small{display:block;color:var(--muted)}
+button{width:100%;margin-top:16px;font:600 16px -apple-system,system-ui,sans-serif;background:#c8553d;color:#fff;border:0;border-radius:12px;padding:13px}
+</style>
+<main><div class="icon">${ICON}<span class="zz">z<sup>z</sup></span></div>
+<h1>Your Mac is offline</h1><p>AgentsEye on your Mac isn't connected right now.</p>
+<ul><li><span>💤</span><div><b>Asleep or lid closed?</b><small>Wake it. Keep your Mac awake in AgentsEye's settings stops this.</small></div></li>
+<li><span>📶</span><div><b>No internet?</b><small>Check the Mac's Wi-Fi or network.</small></div></li>
+<li><span>🔄</span><div><b>Just updated or restarted?</b><small>AgentsEye reconnects on its own within a few seconds.</small></div></li></ul>
+<p style="font-size:13px">Checking again every few seconds</p><button onclick="location.reload()">Try now</button></main>
 <script>setTimeout(()=>location.reload(),5000)</script>`;
 
 // The product page: what AgentsEye is and the one line that installs it, pointed at this relay.
@@ -132,7 +150,7 @@ export class Room {
 
   async forward(request, { ip = '' } = {}) {
     const accept = request.headers.get('accept') || '';
-    if (!this.socket) return accept.includes('text/html') ? new Response(offlinePage, { status:503, headers:{ 'content-type':'text/html; charset=utf-8', 'cache-control':'no-store' } }) : new Response('Mac offline', { status:503, headers:{ 'cache-control':'no-store' } });
+    if (!this.socket) return accept.includes('text/html') ? new Response(offlinePage(), { status:503, headers:{ 'content-type':'text/html; charset=utf-8', 'cache-control':'no-store' } }) : new Response('Mac offline', { status:503, headers:{ 'cache-control':'no-store' } });
     const body = ['GET', 'HEAD'].includes(request.method) ? null : new Uint8Array(await request.arrayBuffer());
     if (body && body.length > MAX_BODY) return new Response('Request too large', { status:413 });
     const url = new URL(request.url);

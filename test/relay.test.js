@@ -140,5 +140,5 @@ test('when the Mac goes away the phone gets a clear offline answer', async () =>
   assert.equal(res.status, 503);
   const page = await phone('/', { headers:{ accept:'text/html' } });
   assert.equal(page.status, 503);
-  assert.match(await page.text(), /Can't reach your Mac/);
+  assert.match(await page.text(), /Your Mac is offline/);
 });
