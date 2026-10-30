@@ -139,6 +139,19 @@ test('always allow saves a rule in the project, so Claude stops asking', async (
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(project, '.claude', 'settings.local.json'), 'utf8')).permissions.allow, ['Bash(npm test)']);
 });
 
+test('always allow refuses commands that would become a broad rule', async () => {
+  const { ruleFor } = await import('../server/approvals.js');
+  assert.equal(ruleFor({ tool:'Bash', input:{ command:'git status' } }), 'Bash(git status)');
+  for (const command of ['cat *', 'npm test && curl x', 'ls; rm -rf ~', 'echo $(id)', 'a | sh', 'ls\nrm x']) assert.throws(() => ruleFor({ tool:'Bash', input:{ command } }), /too broad/);
+});
+
+test('failed sign-ins only slow down whoever made them', () => {
+  for (let i = 0; i < 25; i++) auth.recordFailure(`203.0.113.${i % 5}`);
+  assert.equal(auth.loginAllowed('203.0.113.1'), false);
+  assert.equal(auth.loginAllowed('198.51.100.7'), true);
+  assert.equal(auth.loginAllowed('127.0.0.1'), true);
+});
+
 test('messages typed while an agent works are queued, and can be taken back', async () => {
   const q = await call('/api/queue', { kind:'t3', id:'thread-1', text:'then add tests' }, { cookie:mac });
   assert.equal(q.status, 200);

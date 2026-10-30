@@ -8,7 +8,14 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { Room, route, sha256, MAC_ID } from './core.js';
 
-export function createRelay({ dataFile = '' } = {}) {
+// The phone app comes from this checkout's public/ folder, never from a Mac (see core.js).
+const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+const version = JSON.parse(fs.readFileSync(path.join(publicDir, '..', 'package.json'), 'utf8')).version;
+const read = async name => { try { return await fs.promises.readFile(path.join(publicDir, name)); } catch { return null; } };
+const MAX_REQUEST = 1 << 20;
+
+// TRUST_PROXY=1 when a reverse proxy in front sets X-Forwarded-Proto/For; otherwise visitors could fake them.
+export function createRelay({ dataFile = '', trustProxy = process.env.TRUST_PROXY === '1' } = {}) {
   const secrets = dataFile && fs.existsSync(dataFile) ? JSON.parse(fs.readFileSync(dataFile, 'utf8')) : {};
   const save = () => { if (dataFile) fs.writeFileSync(dataFile, JSON.stringify(secrets, null, 2), { mode:0o600 }); };
   const rooms = new Map();
@@ -24,14 +31,22 @@ export function createRelay({ dataFile = '' } = {}) {
 
   const server = http.createServer(async (req, res) => {
     try {
-      const proto = req.headers['x-forwarded-proto'] || 'http';
+      const proto = (trustProxy && req.headers['x-forwarded-proto']) || 'http';
       const url = `${proto}://${req.headers.host}${req.url}`;
       const chunks = [];
-      for await (const c of req) chunks.push(c);
+      let size = 0;
+      for await (const c of req) {
+        size += c.length;
+        if (size > MAX_REQUEST) { res.writeHead(413).end('Request too large'); req.destroy(); return; }
+        chunks.push(c);
+      }
       const body = chunks.length && !['GET', 'HEAD'].includes(req.method) ? Buffer.concat(chunks) : undefined;
       const request = new Request(url, { method:req.method, headers:Object.entries(req.headers).filter(([, v]) => typeof v === 'string'), body });
       const r = route(request, { repo:process.env.REPO || '' });
-      const response = r.response || await roomFor(r.macId).forward(request, { ip:req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress });
+      const ip = (trustProxy && req.headers['x-forwarded-for']?.split(',')[0].trim()) || req.socket.remoteAddress;
+      // Only a Mac that has connected gets a room; any other id just sees the app and "Mac offline".
+      const room = r.macId && (rooms.get(r.macId) || new Room({ verify:async () => false }));
+      const response = r.response || await room.serve(request, { ip, macId:r.macId, read, version });
       const headers = {};
       response.headers.forEach((v, k) => { if (k === 'set-cookie') (headers[k] ||= []).push(v); else headers[k] = v; });
       for (const c of response.headers.getSetCookie?.() || []) if (!headers['set-cookie']?.includes(c)) (headers['set-cookie'] ||= []).push(c);

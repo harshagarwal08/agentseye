@@ -42,7 +42,7 @@ const security = {
   'x-frame-options':'DENY',
   'x-content-type-options':'nosniff',
   'referrer-policy':'no-referrer',
-  'content-security-policy':"default-src 'self'; img-src 'self' data: blob:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'",
+  'content-security-policy':"default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
 };
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });

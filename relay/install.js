@@ -39,7 +39,7 @@ NPM="$(dirname "$NODE")/npm"; [ -x "$NPM" ] || NPM="npm"
 say "Downloading AgentsEye…"
 TMP="$(mktemp -d)"
 curl -fsSL "\${AGENTSEYE_TARBALL:-https://codeload.github.com/$REPO/tar.gz/HEAD}" | tar -xz -C "$TMP" --strip-components 1
-( cd "$TMP" && PATH="$(dirname "$NODE"):$PATH" "$NPM" install --omit=dev --no-audit --no-fund --loglevel=error )
+( cd "$TMP" && PATH="$(dirname "$NODE"):$PATH" "$NPM" install --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error )
 rm -rf "$APP.old"; [ -d "$APP" ] && mv "$APP" "$APP.old"; mv "$TMP" "$APP"; rm -rf "$APP.old"
 printf '{"repo":"%s"}\\n' "$REPO" > "$HOME_DIR/install.json"
 

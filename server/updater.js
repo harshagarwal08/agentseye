@@ -35,7 +35,7 @@ export async function update({ force = false } = {}) {
     fs.mkdirSync(next);
     if (!(await run('/usr/bin/tar', ['-xzf', tarball, '-C', next, '--strip-components', '1'])).ok) throw new Error('Could not unpack the update.');
     const npm = path.join(path.dirname(process.execPath), 'npm');
-    const install = await run(fs.existsSync(npm) ? npm : 'npm', ['install', '--omit=dev', '--no-audit', '--no-fund', '--prefix', next], { timeout:300000 });
+    const install = await run(fs.existsSync(npm) ? npm : 'npm', ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', next], { timeout:300000 });
     if (!install.ok) throw new Error('Installing the update failed.');
     fs.rmSync(`${APP}.old`, { recursive:true, force:true });
     fs.renameSync(APP, `${APP}.old`);

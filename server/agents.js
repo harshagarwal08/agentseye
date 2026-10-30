@@ -378,7 +378,7 @@ export async function resume(harness, id, cwd, text = '') {
   const dir = cwd && fs.existsSync(cwd) ? cwd : HOME;
   const cli = { claude:`claude --resume ${shellQuote(id)}`, codex:`codex resume ${shellQuote(id)} --no-alt-screen` }[harness];
   if (!cli) throw fail('Unknown harness.');
-  await openTerminal(`cd ${shellQuote(dir)} && ${cli}${text ? ` ${shellQuote(text)}` : ''}`);
+  await openTerminal(`cd ${shellQuote(dir)} && ${cli}${text ? ` ${String(text).startsWith('-') ? '-- ' : ''}${shellQuote(text)}` : ''}`);
 }
 
 // Claude takes the new session's id up front, so the phone can open it straight away; Codex's id is found
@@ -387,7 +387,8 @@ export async function start(harness, cwd, prompt, opts = {}) {
   const dir = folder(cwd);
   const startedAt = Date.now();
   const flags = options(harness, opts);
-  const text = prompt ? ` ${shellQuote(prompt)}` : '';
+  // A prompt that starts with "-" would be read as an option; "--" ends the options.
+  const text = prompt ? ` ${String(prompt).startsWith('-') ? '-- ' : ''}${shellQuote(prompt)}` : '';
   if (harness === 'claude') {
     const id = crypto.randomUUID();
     await openTerminal(`cd ${shellQuote(dir)} && claude --session-id ${id} ${flags}${text}`);

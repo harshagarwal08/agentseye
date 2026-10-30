@@ -75,8 +75,9 @@ test('the phone opens the app through the relay; private API calls must be seale
   const info = await (await phone('/relay-info')).json();
   assert.equal(info.relay, true);
   assert.equal(info.macId, macId);
-  assert.equal((await phone('/api/home')).status, 403);
-  assert.equal((await phone('/api/auth/state')).status, 403);
+  // Only the sealed channel reaches the Mac; plain API paths stop at the relay.
+  assert.equal((await phone('/api/home')).status, 404);
+  assert.equal((await phone('/api/auth/state')).status, 404);
   key = await e2e.importKey(await e2e.deriveKeyBytes(PASSWORD, info.salt, info.iterations));
 });
 
@@ -87,7 +88,8 @@ test('wrong password is rejected; sign-in and approval work end to end', async (
   assert.equal((await sealed('GET', '/api/auth/state')).json.authed, false);
   const login = await sealed('POST', '/api/auth/login', { password:PASSWORD });
   assert.equal(login.status, 202);
-  assert.ok(jar.agentseye, 'device cookie set through the relay');
+  assert.ok(jar[`agentseye_${macId}`], 'device cookie set through the relay, under this Mac\'s own name');
+  assert.ok(!jar.agentseye);
   assert.equal((await sealed('GET', '/api/home')).status, 423);
   // Approve on the Mac, then the phone is in.
   const macCookie = (await fetch('http://127.0.0.1:4495/api/auth/login', { method:'POST', headers:{ 'content-type':'application/json', 'x-agentseye':'1' }, body:JSON.stringify({ password:PASSWORD }) })).headers.getSetCookie()[0].split(';')[0];
@@ -154,6 +156,40 @@ test('the relay never sees the password or any private data', { skip:Boolean(ext
   assert.ok(!all.includes(PASSWORD), 'password visible to relay');
   assert.ok(!all.includes('"sessions"'), 'session data visible to relay');
   assert.ok(!all.includes('"processes"') && !all.includes('"pid"'), 'process list visible to relay');
+});
+
+test('another Mac on the relay cannot serve this phone scripts or see its sign-in', { skip:Boolean(external) && 'needs the in-process relay' }, async () => {
+  // Someone else's "Mac" that answers everything with its own script and tries to plant a cookie.
+  const evil = 'evilevilevilevil';
+  const got = [];
+  const ws = new WebSocket(`${R.replace('http', 'ws')}/connect?mac=${evil}`);
+  await new Promise(r => ws.addEventListener('open', r));
+  ws.send(JSON.stringify({ t:'hello', mac:evil, secret:'mine' }));
+  ws.addEventListener('message', e => {
+    const m = JSON.parse(e.data);
+    if (m.t !== 'req') return;
+    got.push(m);
+    ws.send(JSON.stringify({ t:'head', id:m.id, status:200, headers:[['content-type', 'text/html'], ['set-cookie', 'agentseye_mac=x; Path=/'], ['service-worker-allowed', '/']] }));
+    ws.send(JSON.stringify({ t:'body', id:m.id, data:Buffer.from('<script>steal()</script>').toString('base64') }));
+    ws.send(JSON.stringify({ t:'end', id:m.id }));
+  });
+  await new Promise(r => setTimeout(r, 200));
+  const saved = { ...jar };
+  await phone(`/m/${evil}`);
+  const app = await phone('/app.js');
+  assert.equal(await app.text(), fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8'));
+  assert.ok(!(await (await phone('/sw.js')).text()).includes('steal'));
+  assert.equal(got.length, 0, 'the app\'s files never come from a Mac');
+  const res = await phone('/api/e2e', { method:'POST', headers:{ 'content-type':'application/json', 'x-agentseye':'1' }, body:'{}' });
+  assert.equal(res.headers.get('content-type'), 'text/plain; charset=utf-8');
+  assert.equal(res.headers.get('set-cookie'), null);
+  assert.equal(res.headers.get('service-worker-allowed'), null);
+  assert.equal(got.length, 1);
+  assert.equal(got[0].headers.cookie, undefined, 'another Mac\'s sign-in cookie is not passed on');
+  ws.close();
+  Object.assign(jar, saved);
+  await phone(`/m/${macId}`);
+  assert.equal((await sealed('GET', '/api/home')).status, 200);
 });
 
 test('a stranger cannot take over this Mac id on the relay', async () => {

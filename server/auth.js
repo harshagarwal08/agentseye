@@ -136,12 +136,14 @@ export function validHookToken(given) {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
-// Failed sign-ins: 5 per minute per visitor, 20 per hour overall.
+// Failed sign-ins: 5 a minute and 20 an hour, per visitor. Never one limit for everyone, or a stranger sending
+// junk could lock out the owner too.
 const failures = [];
 export function loginAllowed(ip) {
   const now = Date.now();
   while (failures.length && failures[0].at < now - 3600000) failures.shift();
-  return failures.filter(f => f.ip === ip && f.at > now - 60000).length < 5 && failures.length < 20;
+  const mine = failures.filter(f => f.ip === ip);
+  return mine.filter(f => f.at > now - 60000).length < 5 && mine.length < 20;
 }
 export function recordFailure(ip) {
   failures.push({ ip, at:Date.now() });

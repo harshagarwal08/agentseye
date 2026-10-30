@@ -75,7 +75,11 @@ export function decide(id, decision, message, answers, always = false) {
 // settings), so Claude stops asking for the same thing in that project: the exact command, or the tool.
 export function ruleFor(entry) {
   const i = entry.input || {};
-  if (entry.tool === 'Bash' && i.command) return `Bash(${String(i.command).replace(/\)/g, '\\)')})`;
+  if (entry.tool === 'Bash' && i.command) {
+    // In Claude's rules * is a wildcard and chained commands widen what a rule covers, so only plain commands qualify.
+    if (/[*\n]|&&|\|\||[;|`]|\$\(/.test(i.command)) throw Object.assign(new Error('This command is too broad to always allow. Allow it once instead.'), { status:400 });
+    return `Bash(${String(i.command).replace(/\)/g, '\\)')})`;
+  }
   if (entry.tool === 'WebFetch' && i.url) { try { return `WebFetch(domain:${new URL(i.url).hostname})`; } catch {} }
   if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(entry.tool)) return 'Edit';
   return entry.tool;

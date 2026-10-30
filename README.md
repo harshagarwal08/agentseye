@@ -79,6 +79,8 @@ Prompts go to the phone **when you're away from the Mac** (no keyboard or mouse 
 - **AgentsEye relay (recommended, nothing to install)**: AgentsEye connects *out* to a relay you deploy free on Cloudflare (`relay/README.md`); your phone opens `https://<relay>/m/<mac-id>`. Works on company Macs behind proxies, no admin rights. Everything is end-to-end encrypted with a key derived from your password — the relay only routes ciphertext.
 - **Tailscale (recommended)**: `tailscale serve` gives a private, permanent `https://<mac>.<tailnet>.ts.net`, reachable only from your devices.
 - Cloudflare Quick Tunnel (URL changes on restart; AgentsEye follows it).
+- The relay serves the phone app itself, never a Mac's copy, and each Mac's sign-in cookie is kept apart, so Macs sharing a relay can't reach each other's phones. Because the relay serves the code, only use a relay you trust (yours, your team's, or the public one).
+- Updates install with `--ignore-scripts`; "Always allow" refuses wildcard or chained commands; signed-out devices stop getting notifications.
 - Password + **device approval on the Mac**; scanning the QR (single-use, 10 min) skips approval.
 - Per-device keys (hashed), sign out any device, rate-limited sign-in, push alert after 20 failures.
 - Mac-only actions: approving devices, tunnel, hook install, opening panes on the Mac.

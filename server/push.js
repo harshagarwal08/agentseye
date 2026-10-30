@@ -1,6 +1,7 @@
 import path from 'node:path';
 import webpush from 'web-push';
 import { DATA, readJson, writeJson } from './paths.js';
+import { listDevices } from './auth.js';
 
 // Keys are created once per Mac; subscriptions are stored per device so signing a device out stops its pushes.
 const keysFile = path.join(DATA, 'push.json');
@@ -31,6 +32,9 @@ export async function notify({ title, body, url = '/', tag }) {
   webpush.setVapidDetails(process.env.AGENTSEYE_PUSH_CONTACT || 'mailto:agentseye@users.noreply.github.com', k.publicKey, k.privateKey);
   const all = subs();
   let changed = false;
+  // A device that was signed out (or expired) gets nothing more, even if its phone still holds the subscription.
+  const live = new Set(listDevices().map(d => d.id));
+  for (const device of Object.keys(all)) if (!live.has(device)) { delete all[device]; changed = true; }
   await Promise.all(Object.entries(all).map(async ([device, sub]) => {
     try { await webpush.sendNotification(sub, JSON.stringify({ title, body, url, tag }), { TTL:600 }); }
     catch (error) { if (error.statusCode === 404 || error.statusCode === 410) { delete all[device]; changed = true; } }

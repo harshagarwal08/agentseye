@@ -2,6 +2,14 @@ name = "agentseye"
 main = "worker.js"
 compatibility_date = "2026-10-01"
 
+# The phone app, served by the relay itself (see core.js: Macs never serve scripts on the shared origin).
+[assets]
+directory = "../public"
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "none"
+not_found_handling = "none"
+
 [[durable_objects.bindings]]
 name = "MACS"
 class_name = "MacRoom"

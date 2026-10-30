@@ -106,7 +106,7 @@ export function createProxy() {
     if (!state.target) return deny(res, 410, 'No preview is open.');
     const headers = { ...req.headers, host:`localhost:${state.target}` };
     delete headers['accept-encoding'];
-    headers.cookie = String(headers.cookie || '').split(/;\s*/).filter(c => c && !c.startsWith('agentseye_preview=')).join('; ') || undefined;
+    headers.cookie = String(headers.cookie || '').split(/;\s*/).filter(c => c && !/^agentseye(_preview)?=/.test(c)).join('; ') || undefined;
     if (!headers.cookie) delete headers.cookie;
     const upstream = http.request({ host:'127.0.0.1', port:state.target, method:req.method, path:req.url, headers }, up => {
       res.writeHead(up.statusCode, up.headers);

@@ -55,6 +55,8 @@ async function unlock(password) {
   relay.key = await e2e.importKey(raw);
 }
 const forgetKey = () => { localStorage.removeItem(keyName()); relay.key = null; };
+// Signing out leaves nothing behind for whoever holds the phone next: no keys for other Macs, no saved app copy.
+const forgetPhone = () => { localStorage.clear(); sessionStorage.clear(); caches?.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {}); };
 // The Macs this phone has opened, newest first, with the name each one reports.
 const macs = () => JSON.parse(localStorage.getItem('macs') || '[]');
 function rememberMac(name) {
@@ -274,7 +276,7 @@ function unlockForm(g, error = '') {
     <button class="primary" type="submit">Unlock</button><div class="error" id="err">${esc(error)}</div>
     ${/iPhone|iPad/.test(navigator.userAgent) && /CriOS|FxiOS|EdgiOS/.test(navigator.userAgent) ? '<p class="small muted">To add AgentsEye to your Home Screen, iPhone needs Safari.</p><button type="button" id="to-safari">Open in Safari</button>' : ''}</form>`;
   // x-safari-https:// is iOS's own way to hand a link from another browser to Safari; keep the pairing code.
-  $('#to-safari')?.addEventListener('click', () => { location.href = `x-safari-${location.origin}/m/${relay.info.macId}${pairCode() ? `?pair=${encodeURIComponent(pairCode())}` : ''}`; });
+  $('#to-safari')?.addEventListener('click', () => { location.href = `x-safari-${location.origin}/m/${relay.info.macId}${pairCode() ? `#pair=${encodeURIComponent(pairCode())}` : ''}`; });
   $('#pw').focus();
   $('#unlock').onsubmit = async e => {
     e.preventDefault();
@@ -472,8 +474,8 @@ function route() {
 async function pollBadges() {
   const b = await api('/api/badges').catch(() => null);
   if (!b) return;
-  // The Mac updated itself: reload once to pick up the new screens.
-  if (b.version && APP_VERSION && b.version !== APP_VERSION && sessionStorage.getItem('reloaded-for') !== b.version) {
+  // The Mac updated itself: reload once to pick up the new screens. Through a relay the screens come from the relay.
+  if (!relay.on && b.version && APP_VERSION && b.version !== APP_VERSION && sessionStorage.getItem('reloaded-for') !== b.version) {
     sessionStorage.setItem('reloaded-for', b.version);
     location.reload();
     return;
@@ -902,9 +904,12 @@ async function sharedView(id, rawKey) {
   const loop = async () => { let again = true; try { again = await draw(); } catch { again = true; } if (again) setTimeout(loop, 6000); };
   loop();
 }
+// The key arrives in the #fragment (never sent to a server); it moves to this tab's storage so it isn't left in history.
 const shareFromUrl = () => {
   const id = new URLSearchParams(location.search).get('share');
-  const k = new URLSearchParams(location.hash.slice(1)).get('k');
+  const fromHash = new URLSearchParams(location.hash.slice(1)).get('k');
+  if (id && fromHash) { sessionStorage.setItem(`share-key:${id}`, fromHash); history.replaceState(null, '', location.pathname + location.search); }
+  const k = id && sessionStorage.getItem(`share-key:${id}`);
   if (!id || !k) return null;
   try { return { id, key:Uint8Array.from(atob(k.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)) }; } catch { return null; }
 };
@@ -931,8 +936,8 @@ async function changesView(kind, harness, id) {
     return `<div class="pr-card"><div class="pr-head"><b>#${p.number} ${esc(p.title)}</b><span class="chip ${st[1]}">${st[0]}</span></div>
       <div class="small muted">${esc(p.head)} → ${esc(p.base)} · <b class="plus">+${p.additions}</b> <b class="minus">−${p.deletions}</b>${p.comments ? ` · ${p.comments} comment${p.comments > 1 ? 's' : ''}` : ''}${p.review === 'APPROVED' ? ' · ✓ approved' : p.review === 'CHANGES_REQUESTED' ? ' · changes requested' : ''}${p.mergeable === 'CONFLICTING' ? ' · <span style="color:var(--red)">has conflicts</span>' : ''}</div>
       ${p.checks.length ? `<div class="checks-sum">${sum.fail ? `<span class="pace bad">✕ ${sum.fail} failing</span>` : ''}${sum.pending ? `<span class="pace warn">⏳ ${sum.pending} running</span>` : ''}${sum.pass ? `<span class="pace ok">✓ ${sum.pass} passed</span>` : ''}</div>
-        ${sum.fail ? `<div class="small">${p.checks.filter(c => c.state === 'fail').slice(0, 5).map(c => `<div>✕ ${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name)}</a>` : esc(c.name)}</div>`).join('')}</div>` : ''}` : '<div class="small muted">No checks on this pull request.</div>'}
-      <div class="row2"><a href="${esc(p.url)}" target="_blank" rel="noopener" class="btn-link"><button type="button">Open on GitHub</button></a>${canMerge ? '<button class="primary" id="pr-merge">Merge</button>' : ''}</div>
+        ${sum.fail ? `<div class="small">${p.checks.filter(c => c.state === 'fail').slice(0, 5).map(c => `<div>✕ ${/^https:\/\//.test(c.url || '') ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name)}</a>` : esc(c.name)}</div>`).join('')}</div>` : ''}` : '<div class="small muted">No checks on this pull request.</div>'}
+      <div class="row2"><a href="${/^https:\/\//.test(p.url) ? esc(p.url) : '#'}" target="_blank" rel="noopener" class="btn-link"><button type="button">Open on GitHub</button></a>${canMerge ? '<button class="primary" id="pr-merge">Merge</button>' : ''}</div>
       ${p.state === 'OPEN' ? '<form id="pr-comment" class="row2"><input id="pr-text" placeholder="Comment on the pull request" autocomplete="off"><button>Comment</button></form>' : ''}</div>`;
   };
   const draw = async () => {
@@ -1408,7 +1413,7 @@ async function settingsView() {
     $('#others')?.addEventListener('click', async () => { if (await confirmSheet('Sign out every other device?', '', 'Sign out others', true)) attempt(async () => { await api('/api/devices/others', {}); render(); }); });
     view.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/approve', { id:b.dataset.approve }); render(); }, 'Approved'));
     view.querySelectorAll('[data-remove]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/remove', { id:b.dataset.remove }); render(); }));
-    $('#logout').onclick = async () => { await disablePush().catch(() => {}); await api('/api/auth/logout', {}); forgetKey(); gate(); };
+    $('#logout').onclick = async () => { await disablePush().catch(() => {}); await api('/api/auth/logout', {}); forgetKey(); forgetPhone(); gate(); };
   };
   await firstLoad(view, render, `<div class="top"><h1>Settings</h1></div>${skeleton(4, 'block')}`);
   every(5000, () => render().catch(() => {}));

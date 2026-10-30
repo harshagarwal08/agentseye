@@ -19,8 +19,33 @@ export async function sha256(text) {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(text)))].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Request headers worth passing on; hop-by-hop and proxy headers are dropped.
-const FORWARD = ['accept', 'accept-language', 'content-type', 'cookie', 'if-none-match', 'if-modified-since', 'range', 'user-agent', 'x-agentseye'];
+// Request headers worth passing on; hop-by-hop and proxy headers are dropped. Cookies are handled per Mac below.
+const FORWARD = ['accept', 'accept-language', 'content-type', 'user-agent', 'x-agentseye'];
+
+// Every Mac on a relay shares one web origin, so the app itself (HTML, scripts, the service worker) always comes
+// from the relay's own copy. If a Mac could serve scripts here, any Mac on the relay could read the keys and
+// cookies phones keep for other Macs. A Mac only ever answers these two, and only with JSON.
+const TO_MAC = new Set(['/api/e2e', '/relay-info']);
+const SECURITY = {
+  'x-frame-options':'DENY',
+  'x-content-type-options':'nosniff',
+  'referrer-policy':'no-referrer',
+  'content-security-policy':"default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+};
+const TYPES = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.svg':'image/svg+xml', '.png':'image/png', '.webmanifest':'application/manifest+json' };
+const cookieValue = (jar, name) => jar.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`))?.[1] || '';
+
+// One file of the app, from the relay's own copy. read(name) returns its bytes or null.
+async function shellFile(pathname, { macId, read, version }) {
+  const name = pathname === '/' ? '/index.html' : pathname;
+  const type = TYPES[name.slice(name.lastIndexOf('.'))];
+  const bytes = type && /^\/[\w-]+(\.[\w-]+)+$/.test(name) ? await read(name) : null;
+  if (!bytes) return new Response('Not found', { status:404, headers:SECURITY });
+  let body = bytes;
+  if (name === '/index.html') body = new TextDecoder().decode(bytes).replaceAll('%APP_VERSION%', version);
+  if (name === '/manifest.webmanifest') body = JSON.stringify({ ...JSON.parse(new TextDecoder().decode(bytes)), start_url:`/m/${macId}/?source=homescreen` });
+  return new Response(body, { headers:{ ...SECURITY, 'content-type':type, 'cache-control':'no-cache' } });
+}
 
 const offlinePage = () => `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AgentsEye · Mac offline</title>
 <meta name="color-scheme" content="light dark">
@@ -90,7 +115,7 @@ const privacy = `<!doctype html><meta charset="utf-8"><meta name="viewport" cont
 <p>AgentsEye runs on your Mac. Your sessions, files, commands and password never leave it except to reach your own phone.</p>
 <p><b>What this relay sees:</b> an id for your Mac, a hash of its connection secret, and when and how much encrypted data passes between your phone and your Mac. Everything private is encrypted end to end with a key derived from your password, which the relay never receives.</p>
 <p><b>What it stores:</b> only the hash of each Mac's connection secret, so nobody else can take over its address. No accounts, no analytics, no cookies besides the one that remembers which Mac your phone opens.</p>
-<p><b>What it can't do:</b> read your data, or sign in as you. If you prefer not to trust anyone, run your own relay for free — the code is open.</p>
+<p><b>What it can't do:</b> read your data as it passes through. The relay does serve the app's own code to your phone, so only use a relay you trust: this one, your team's, or your own (free, and the code is open).</p>
 </body>`;
 
 // One Room per Mac. It owns that Mac's socket and the requests waiting on it.
@@ -148,14 +173,30 @@ export class Room {
     else if (m.t === 'error') { p.fail(m.message || 'AgentsEye on your Mac failed.'); this.pending.delete(m.id); }
   }
 
-  async forward(request, { ip = '' } = {}) {
+  // A phone request for this Mac: the app's files come from the relay, encrypted calls go down to the Mac.
+  async serve(request, { ip = '', macId, read, version = '' }) {
+    const url = new URL(request.url);
     const accept = request.headers.get('accept') || '';
-    if (!this.socket) return accept.includes('text/html') ? new Response(offlinePage(), { status:503, headers:{ 'content-type':'text/html; charset=utf-8', 'cache-control':'no-store' } }) : new Response('Mac offline', { status:503, headers:{ 'cache-control':'no-store' } });
+    if (!this.socket && (TO_MAC.has(url.pathname) || (url.pathname === '/' && accept.includes('text/html')))) {
+      return accept.includes('text/html') ? new Response(offlinePage(), { status:503, headers:{ 'content-type':'text/html; charset=utf-8', 'cache-control':'no-store' } }) : new Response('Mac offline', { status:503, headers:{ 'cache-control':'no-store' } });
+    }
+    if (TO_MAC.has(url.pathname)) return this.forward(request, { ip, macId });
+    return shellFile(url.pathname, { macId, read, version });
+  }
+
+  async forward(request, { ip = '', macId }) {
     const body = ['GET', 'HEAD'].includes(request.method) ? null : new Uint8Array(await request.arrayBuffer());
     if (body && body.length > MAX_BODY) return new Response('Request too large', { status:413 });
     const url = new URL(request.url);
     const headers = {};
     for (const h of FORWARD) { const v = request.headers.get(h); if (v) headers[h] = v; }
+    // Each Mac's sign-in cookie has its own name here, and only that one is passed on, so no Mac sees another's.
+    // Phones signed in before cookies were split carry a plain "agentseye" one: it is moved over on first use.
+    const jar = request.headers.get('cookie') || '';
+    const own = cookieValue(jar, `agentseye_${macId}`);
+    const legacy = own ? '' : cookieValue(jar, 'agentseye');
+    if (own || legacy) headers.cookie = `agentseye=${own || legacy}`;
+    const secure = url.protocol === 'https:' ? '; Secure' : '';
     const id = this.next++;
     const socket = this.socket;
     return new Promise(resolve => {
@@ -169,8 +210,18 @@ export class Room {
           if (settled) return;
           settled = true;
           clearTimeout(headTimer);
-          const out = new Headers();
-          for (const [k, v] of m.headers || []) out.append(k, v);
+          const out = new Headers(SECURITY);
+          out.set('cache-control', 'no-store');
+          for (const [k, v] of m.headers || []) {
+            const name = k.toLowerCase();
+            if (name === 'content-type' && /^(application\/json|text\/plain)\b/.test(v)) out.set(name, v);
+            else if (name === 'set-cookie' && /^agentseye=/.test(v)) out.append(name, v.replace(/^agentseye=/, `agentseye_${macId}=`));
+          }
+          if (!out.has('content-type')) out.set('content-type', 'text/plain; charset=utf-8');
+          if (legacy && !out.has('set-cookie')) {
+            out.append('set-cookie', `agentseye_${macId}=${legacy}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${30 * 86400}${secure}`);
+            out.append('set-cookie', `agentseye=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`);
+          }
           resolve(new Response([204, 304].includes(m.status) || request.method === 'HEAD' ? null : stream, { status:m.status, headers:out }));
         },
         chunk:bytes => { try { controller.enqueue(bytes); } catch {} },
