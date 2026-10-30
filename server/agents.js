@@ -173,7 +173,7 @@ function codexSessions(limit) {
     let entrypoint = '';
     try {
       for (const entry of lines(readHead(f.file))) {
-        if (entry.type === 'session_meta') { id = entry.payload?.id || id; cwd = entry.payload?.cwd || ''; entrypoint = { codex_vscode:'codex-vscode', 'T3 Code':'t3' }[entry.payload?.originator] || ''; }
+        if (entry.type === 'session_meta') { id = entry.payload?.id || id; cwd = entry.payload?.cwd || ''; entrypoint = { codex_vscode:'codex-vscode', 'T3 Code':'t3', t3code_desktop:'t3', 'Codex Desktop':'codex-desktop', codex_cli_rs:'codex-cli', codex_exec:'codex-cli' }[entry.payload?.originator] || ''; }
         if (!title && entry.type === 'response_item' && entry.payload?.type === 'message' && entry.payload.role === 'user') {
           const text = cleanTitle(textOf(entry.payload.content));
           if (text) title = text;
@@ -184,10 +184,39 @@ function codexSessions(limit) {
   });
 }
 
+// Every process with its parent, from one ps call: pid → { ppid, comm }.
+async function processes() {
+  const ps = await run('/bin/ps', ['-axo', 'pid=,ppid=,comm=']);
+  const procs = new Map();
+  for (const l of ps.stdout.split('\n')) {
+    const m = l.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+    if (m) procs.set(Number(m[1]), { ppid:Number(m[2]), comm:m[3] });
+  }
+  return procs;
+}
+
+// Which app a session runs in, found by walking up from its process to the first Mac app:
+// claude → bun → "T3 Code (Nightly).app" is T3 Code; claude → zsh → login → Terminal.app is Terminal.
+const APP_NAMES = { 'Visual Studio Code':'VS Code', 'Visual Studio Code - Insiders':'VS Code', Code:'VS Code', Claude:'Claude Desktop', Codex:'Codex Desktop', iTerm:'iTerm', iTerm2:'iTerm' };
+export function hostApp(procs, pid) {
+  for (let p = pid, hops = 0; p > 1 && hops < 20; hops++) {
+    const proc = procs.get(p);
+    if (!proc) break;
+    // The outermost .app in the path: helpers live inside their app ("Visual Studio Code.app/…/Code Helper.app").
+    const app = proc.comm.match(/\/([^/]+)\.app\//)?.[1];
+    if (app) { const name = app.replace(/\s*\(.*\)$/, ''); return APP_NAMES[name] || name; }
+    p = proc.ppid;
+  }
+  return '';
+}
+// When the process is gone (or never seen), what the session recorded about where it started.
+const APP_BY_ENTRYPOINT = { cli:'Terminal', 'claude-vscode':'VS Code', 'claude-desktop':'Claude Desktop', 'codex-vscode':'VS Code', t3:'T3 Code', 'codex-desktop':'Codex Desktop', 'codex-cli':'Terminal' };
+const appOf = (procs, s) => (s.live && s.pid && hostApp(procs, s.pid)) || APP_BY_ENTRYPOINT[s.entrypoint] || '';
+
 // A running codex process keeps its rollout file open; lsof links the two.
-async function codexLive() {
-  const ps = await run('/bin/ps', ['-axo', 'pid=,comm=']);
-  const pids = ps.stdout.split('\n').map(l => l.trim().match(/^(\d+)\s+(.+)$/)).filter(m => m && path.basename(m[2]) === 'codex').map(m => m[1]);
+async function codexLive(procs) {
+  procs ||= await processes();
+  const pids = [...procs].filter(([, p]) => path.basename(p.comm) === 'codex').map(([pid]) => pid);
   const live = new Map();
   if (!pids.length) return live;
   const result = await run('/usr/sbin/lsof', ['-nP', '-F', 'pn', '-p', pids.join(',')], { timeout:8000 });
@@ -201,7 +230,8 @@ async function codexLive() {
 
 export async function sessions({ limit = 40 } = {}) {
   const claudeRunning = claudeLive();
-  const codexRunning = await codexLive();
+  const procs = await processes();
+  const codexRunning = await codexLive(procs);
   const list = [...claudeSessions(limit), ...codexSessions(limit)];
   for (const s of list) {
     if (s.harness === 'claude' && claudeRunning.has(s.id)) {
@@ -220,7 +250,7 @@ export async function sessions({ limit = 40 } = {}) {
     try { if (file) meta = claudeMeta(file); } catch {}
     list.push({ harness:'claude', id, file, updatedAt:file ? fs.statSync(file).mtimeMs : live.startedAt || Date.now(), title:meta.aiTitle || meta.prompt || 'New session', cwd:meta.cwd || live.cwd, branch:meta.branch, live:true, pid:live.pid, status:live.status, entrypoint:live.entrypoint, subagents:file ? summary(claudeSubagents(file, true)) : undefined });
   }
-  for (const s of list) s.name = nameOf(s.harness, s.id);
+  for (const s of list) { s.name = nameOf(s.harness, s.id); s.app = appOf(procs, s); }
   // Codex writes a new log file each time a conversation is resumed, all with the same id: keep one entry,
   // live if any of its files is open, with the newest activity.
   const merged = new Map();
@@ -326,7 +356,8 @@ export async function findSession(harness, id) {
     try { const m = claudeMeta(file); Object.assign(session, { title:m.aiTitle || m.prompt || '(untitled)', cwd:m.cwd, branch:m.branch }); } catch {}
   } else if (file) {
     try { for (const e of lines(readHead(file))) if (e.type === 'session_meta') session.cwd = e.payload?.cwd || ''; } catch {}
-    session.title = codexSessions(500).find(s => s.id === id)?.title || session.title;
+    const known = codexSessions(500).find(s => s.id === id);
+    Object.assign(session, { title:known?.title || session.title, entrypoint:known?.entrypoint || '' });
   }
   if (harness === 'claude') {
     const live = claudeLive().get(id);
@@ -336,6 +367,7 @@ export async function findSession(harness, id) {
     const pid = (await codexLive()).get(file);
     if (pid) Object.assign(session, { live:true, pid, status:'open' });
   }
+  session.app = appOf(await processes(), session);
   if (!file && !session.live) throw Object.assign(new Error('Session not found.'), { status:404 });
   return session;
 }

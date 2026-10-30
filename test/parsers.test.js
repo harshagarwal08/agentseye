@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMemory, parseDisk, parseBattery, parseProcesses, parseLsof, parseLaunchctlList } from '../server/system.js';
 import { parseBrew, parseNpm, parseSoftwareUpdate } from '../server/updates.js';
-import { parseClaude, parseCodex } from '../server/agents.js';
+import { parseClaude, parseCodex, hostApp } from '../server/agents.js';
 import { parseRows } from '../server/privacy.js';
 
 test('memory counts active, wired and compressed pages', () => {
@@ -127,4 +127,20 @@ test('git status lists changes, shows a diff, and commits', async () => {
   const after = await git.commit(dir, 'from phone', false);
   assert.equal(after.files.length, 0);
   fs.rmSync(dir, { recursive:true, force:true });
+});
+
+test('each session is traced to the Mac app it runs in', () => {
+  const procs = new Map([
+    [10, { ppid:1, comm:'/Users/me/Applications/T3 Code (Nightly).app/Contents/MacOS/T3 Code (Nightly)' }],
+    [11, { ppid:10, comm:'/Users/me/.bun/bin/bun' }], [12, { ppid:11, comm:'/Users/me/.local/bin/claude' }],
+    [20, { ppid:1, comm:'/Applications/Visual Studio Code.app/Contents/MacOS/Code' }],
+    [21, { ppid:20, comm:'/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)' }],
+    [22, { ppid:21, comm:'/Users/me/.local/bin/claude' }],
+    [30, { ppid:1, comm:'/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal' }],
+    [31, { ppid:30, comm:'login' }], [32, { ppid:31, comm:'-zsh' }], [33, { ppid:32, comm:'codex' }],
+    [40, { ppid:1, comm:'/Applications/Cursor.app/Contents/MacOS/Cursor' }], [41, { ppid:40, comm:'claude' }],
+    [50, { ppid:1, comm:'/Applications/Claude.app/Contents/MacOS/Claude' }], [51, { ppid:50, comm:'claude' }],
+    [60, { ppid:1, comm:'tmux' }], [61, { ppid:60, comm:'claude' }],
+  ]);
+  assert.deepEqual([12, 22, 33, 41, 51, 61].map(pid => hostApp(procs, pid)), ['T3 Code', 'VS Code', 'Terminal', 'Cursor', 'Claude Desktop', '']);
 });

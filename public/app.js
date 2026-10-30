@@ -620,9 +620,13 @@ const agentState = a => (a.status === 'waiting' ? 'waiting' : a.status === 'busy
 // Text boxes grow with what you type, up to about six lines.
 const grow = ta => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; };
 
+// Where an agent runs on the Mac: Terminal, VS Code, Cursor, T3 Code, the Claude or Codex app…
+const appLabel = a => (a.source === 't3' ? 'T3 Code' : a.source === 'ide' ? { cursor:'Cursor', vscode:'VS Code', gemini:'Terminal' }[a.app] || ''
+  : a.app || (['claude-vscode', 'codex-vscode'].includes(a.entrypoint) ? 'VS Code' : 'Terminal'));
+
 function agentRow(a) {
   const st = agentState(a);
-  const sub = a.source === 't3' ? [a.project, a.preview && st !== 'busy' ? a.preview : ''].filter(Boolean).join(' · ') : [where(a), ['claude-vscode', 'codex-vscode'].includes(a.entrypoint) ? 'VS Code' : 'Terminal'].filter(Boolean).join(' · ');
+  const sub = a.source === 't3' ? [a.project, appLabel(a), a.preview && st !== 'busy' ? a.preview : ''].filter(Boolean).join(' · ') : [where(a), appLabel(a)].filter(Boolean).join(' · ');
   return `<a class="agent ${st}" href="${agentHref(a)}">
     <div class="avatar">${avatar(a.harness, { waiting:'waiting', busy:'busy', open:'open', done:'off', failed:'off' }[st])}</div>
     <div class="grow"><div class="t">${esc(a.name || a.title)}</div><div class="s">${esc(sub || harnessName[a.harness])}</div></div>
@@ -1198,7 +1202,7 @@ async function sessionView(harness, id) {
     if (!info) return;
     const s = info.session;
     $('#s-title').textContent = `${display(s)} ✎`;
-    $('#s-sub').textContent = where(s);
+    $('#s-sub').textContent = [where(s), appLabel(s)].filter(Boolean).join(' · ');
     const helperTab = $('#s-tabs [data-t=helpers]');
     if (helperTab) helperTab.textContent = s.subagents?.length ? `Helpers ${s.subagents.filter(a => a.status === 'running').length || s.subagents.length}` : 'Helpers';
     $('#s-chip').innerHTML = `${statusChip(s)}<span class="muted" style="margin-left:4px">⋯</span>`;

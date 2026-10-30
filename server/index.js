@@ -88,10 +88,11 @@ function needsYou() {
 }
 
 // Every agent in one list: T3 Code threads (chat through T3), plus Claude/Codex sessions running elsewhere
-// (Terminal, VS Code). Sessions T3 itself runs (entrypoint sdk-ts) are already covered by their T3 thread.
+// (Terminal, VS Code, Cursor, the Claude and Codex apps). Sessions T3 itself runs are already covered by their
+// T3 thread; other SDK-run sessions only show when we can tell which app runs them.
 async function allAgents() {
   const local = (await agents.sessions({ limit:30 }))
-    .filter(s => s.live && s.entrypoint !== 'sdk-ts' && s.entrypoint !== 't3')
+    .filter(s => s.live && s.app !== 'T3 Code' && s.entrypoint !== 't3' && (s.entrypoint !== 'sdk-ts' || s.app))
     .map(s => ({ ...s, source:'local' }));
   return [...t3.threads(), ...local, ...await ides.list().catch(() => [])];
 }
@@ -101,7 +102,7 @@ async function sessionDelivery(session) {
   if (!session.live) return { delivery:'resume', tty:'' };
   const tty = session.pid ? await terminal.ttyOf(session.pid) : '';
   if (tty && await terminal.inTerminal(tty)) return { delivery:'terminal', tty };
-  const where = { 'claude-vscode':'VS Code', 'codex-vscode':'VS Code', 'sdk-ts':'another app', cli:'another terminal app' }[session.entrypoint] || 'another app';
+  const where = session.app && session.app !== 'Terminal' ? session.app : session.entrypoint === 'cli' ? 'another terminal app' : 'another app';
   // Chats in an editor can't be typed into, but the same conversation can carry on in Terminal, where we can.
   const canMove = ['claude-vscode', 'codex-vscode'].includes(session.entrypoint);
   return { delivery:'none', tty, canMove, note:canMove ? `Open in ${where}. Sending moves this chat to Terminal on your Mac.` : `Open in ${where}. Reply from there.` };
