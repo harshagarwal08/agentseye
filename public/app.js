@@ -636,7 +636,8 @@ const appLabel = a => (a.source === 't3' ? 'T3 Code' : a.source === 'ide' ? { cu
 
 function agentRow(a) {
   const st = agentState(a);
-  const sub = a.source === 't3' ? [a.project, appLabel(a), a.preview && st !== 'busy' ? a.preview : ''].filter(Boolean).join(' · ') : [where(a), appLabel(a)].filter(Boolean).join(' · ');
+  // The app goes first so it survives when a long folder or branch name is cut off.
+  const sub = [appLabel(a), ...(a.source === 't3' ? [a.project, a.preview && st !== 'busy' ? a.preview : ''] : [where(a)])].filter(Boolean).join(' · ');
   return `<a class="agent ${st}" href="${agentHref(a)}">
     <div class="avatar">${avatar(a.harness, { waiting:'waiting', busy:'busy', open:'open', done:'off', failed:'off' }[st])}</div>
     <div class="grow"><div class="t">${esc(a.name || a.title)}</div><div class="s">${esc(sub || harnessName[a.harness])}</div></div>
