@@ -96,7 +96,7 @@ a{color:#c8553d}
 <img class="logo" alt="" src="data:image/svg+xml,${encodeURIComponent(ICON)}">
 <h1>Your coding agents,<br>in your pocket.</h1>
 <p class="lede">AgentsEye shows every Claude Code and Codex session on your Mac, lets you answer them, approve their requests and start new ones — from your phone, anywhere.</p>
-<div class="cmd"><code id="c">curl -fsSL ${esc(origin)}/install.sh | sh</code><button onclick="navigator.clipboard.writeText(document.getElementById('c').textContent);this.textContent='Copied'">Copy</button></div>
+<div class="cmd"><code id="c">curl -fsSL ${esc(origin)} | sh</code><button onclick="navigator.clipboard.writeText(document.getElementById('c').textContent);this.textContent='Copied'">Copy</button></div>
 <p class="small">Paste into Terminal on your Mac. No admin rights or Homebrew needed. macOS only.</p>
 <div class="grid">
 <div class="card"><b>👀 Everything at a glance</b>Live sessions, subagents, usage limits, and what your Mac is up to.</div>
@@ -246,7 +246,9 @@ export class Room {
 export function route(request, { repo = '' } = {}) {
   const url = new URL(request.url);
   if (url.pathname === '/health') return { response:new Response('ok') };
-  if (url.pathname === '/install.sh') return { response:new Response(installScript({ relay:url.origin, repo }), { headers:{ 'content-type':'text/x-shellscript; charset=utf-8', 'cache-control':'no-cache' } }) };
+  // `curl -fsSL <relay> | sh` works too: command-line tools asking for the home page get the installer.
+  const cli = /^(curl|wget)\//i.test(request.headers.get('user-agent') || '');
+  if (url.pathname === '/install.sh' || (url.pathname === '/' && cli && !url.search)) return { response:new Response(installScript({ relay:url.origin, repo }), { headers:{ 'content-type':'text/x-shellscript; charset=utf-8', 'cache-control':'no-cache' } }) };
   if (url.pathname === '/privacy') return { response:new Response(privacy, { headers:{ 'content-type':'text/html; charset=utf-8' } }) };
   if (url.pathname === '/icon.svg' && !/agentseye_mac=/.test(request.headers.get('cookie') || '')) return { response:new Response(ICON, { headers:{ 'content-type':'image/svg+xml', 'cache-control':'max-age=86400' } }) };
   // /m/<id> remembers the Mac in a cookie and lands on /?mac=<id>, so the address bar always names the Mac:

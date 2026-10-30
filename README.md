@@ -15,7 +15,7 @@ and get a ping when one finishes or needs you. From your phone, anywhere.
 Website: **https://agentseye.agentseye.workers.dev**
 
 ```bash
-curl -fsSL https://agentseye.agentseye.workers.dev/install.sh | sh
+curl -fsSL https://agentseye.agentseye.workers.dev | sh
 ```
 
 It installs into `~/.agentseye` (downloading a private Node if needed), starts at login, keeps itself updated, and

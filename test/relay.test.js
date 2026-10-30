@@ -192,6 +192,13 @@ test('another Mac on the relay cannot serve this phone scripts or see its sign-i
   assert.equal((await sealed('GET', '/api/home')).status, 200);
 });
 
+test('curl on the home page gets the installer; browsers get the landing page', async () => {
+  const script = await (await fetch(`${R}/`, { headers:{ 'user-agent':'curl/8.7.1' } })).text();
+  assert.match(script, /^#!\/bin\/sh/);
+  assert.equal(script, await (await fetch(`${R}/install.sh`)).text());
+  assert.match(await (await fetch(`${R}/`, { headers:{ 'user-agent':'Mozilla/5.0' } })).text(), /in your pocket/);
+});
+
 test('a stranger cannot take over this Mac id on the relay', async () => {
   const closed = await new Promise(resolve => {
     const ws = new WebSocket(`${R.replace('http', 'ws')}/connect?mac=${macId}`);
