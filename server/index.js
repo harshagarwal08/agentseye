@@ -168,7 +168,7 @@ async function dailySummary() {
   if (!list.length) return;
   const count = st => list.filter(a => a.status === st).length;
   const bits = [`${list.length} chat${list.length === 1 ? '' : 's'} today`, count('waiting') && `${count('waiting')} need you`, count('busy') && `${count('busy')} still working`].filter(Boolean);
-  push.notify({ title:'📋 Today on your Mac', body:`${bits.join(' · ')}. ${list.slice(0, 3).map(a => a.title).join(', ')}`.slice(0, 200), url:'/#/', tag:'daily-summary' });
+  push.notify({ title:'Today on your Mac', body:bits.join(' · '), url:'/#/', tag:'daily-summary' });
 }
 
 const routes = {
@@ -382,7 +382,7 @@ const routes = {
   'GET /api/push/key':() => ({ key:push.publicKey() }),
   'POST /api/push/subscribe':(b, _, __, device) => { push.subscribe(device.id, b.subscription); return { ok:true }; },
   'POST /api/push/unsubscribe':(_, __, ___, device) => { push.unsubscribe(device.id); return { ok:true }; },
-  'POST /api/push/test':() => push.notify({ title:'AgentsEye', body:'Notifications are working.', url:'/', tag:'test' }).then(() => ({ ok:true })),
+  'POST /api/push/test':() => push.notify({ title:'AgentsEye', body:'Notifications on', url:'/', tag:'test' }).then(() => ({ ok:true })),
 
   'POST /api/devices/approve':(b, _, req) => { localOnly(req); auth.setApproval(String(b.id), true); return { ok:true }; },
   'POST /api/devices/remove':(b, _, __, device) => {
@@ -419,7 +419,7 @@ async function handleAuth(req, res, url) {
     const ip = clientIp(req);
     if (!auth.loginAllowed(ip)) throw fail('Too many attempts. Wait a minute.', 429);
     if (!auth.checkPassword(body.password)) {
-      if (auth.recordFailure(ip) === 20) push.notify({ title:'AgentsEye: many failed sign-ins', body:'20 wrong passwords in the last hour.', url:'/#/settings' });
+      if (auth.recordFailure(ip) === 20) push.notify({ title:'Failed sign-ins', body:'20 attempts in the past hour · Review devices', url:'/#/settings', tag:'failed-sign-ins' });
       throw fail('Wrong password.', 401);
     }
     if (local) auth.ensureRelayKey(body.password);

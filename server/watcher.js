@@ -1,4 +1,4 @@
-import { claudeLive, findSession, transcript, folderName, sessions } from './agents.js';
+import { claudeLive, findSession, folderName, sessions } from './agents.js';
 import { nameOf } from './names.js';
 import * as approvals from './approvals.js';
 import * as auth from './auth.js';
@@ -10,15 +10,12 @@ import * as power from './power.js';
 
 const clip = (text, n = 140) => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
-// A notification reads like a message: the chat's title on top, then what happened and where.
+// Chat name on top, one short status below. Details stay in the chat.
 async function describe(id, cwd) {
   let s = null;
   try { s = await findSession('claude', id); } catch {}
   const title = clip(nameOf('claude', id) || (s?.title && s.title !== '(untitled)' ? s.title : '') || folderName(cwd) || 'Claude Code', 60);
-  const project = folderName(s?.cwd || cwd);
-  let reply = '';
-  try { reply = transcript('claude', id, s?.cwd || cwd, { max:6 }).filter(m => m.role === 'assistant').at(-1)?.text || ''; } catch {}
-  return { title, project, reply };
+  return { title };
 }
 
 // Turns state changes into phone notifications: an agent waiting for you, an agent finishing, a device at the door.
@@ -31,9 +28,9 @@ export function start() {
       if (s.entrypoint === 'sdk-ts') continue;
       const before = last.get(id);
       if (s.status === 'waiting' && before !== 'waiting') {
-        describe(id, s.cwd).then(d => push.notify({ title:`✋ ${d.title}`, body:[d.project, 'Claude needs your OK'].filter(Boolean).join(' · '), url:`/#/s/claude/${id}`, tag:`ask-${id}` }));
+        describe(id, s.cwd).then(d => push.notify({ title:d.title, body:'Needs approval', url:`/#/s/claude/${id}`, tag:`ask-${id}` }));
       } else if (before === 'busy' && s.status === 'idle') {
-        describe(id, s.cwd).then(d => push.notify({ title:`✅ ${d.title}`, body:clip(d.reply) || [d.project, 'Done'].filter(Boolean).join(' · '), url:`/#/s/claude/${id}`, tag:`done-${id}` }));
+        describe(id, s.cwd).then(d => push.notify({ title:d.title, body:'Done', url:`/#/s/claude/${id}`, tag:`done-${id}` }));
       }
     }
     last = new Map([...now].map(([id, s]) => [id, s.status]));
@@ -46,9 +43,9 @@ export function start() {
     const now = t3.summarize(after);
     if (now.status === was.status) return;
     const url = `/#/t/${now.id}`;
-    if (now.status === 'waiting') push.notify({ title:`✋ ${now.title}`, body:[now.project, 'Needs your input'].filter(Boolean).join(' · '), url, tag:`t3-${now.id}` });
-    else if (was.status === 'busy' && now.status === 'done') push.notify({ title:`✅ ${now.title}`, body:now.preview || [now.project, 'Done'].filter(Boolean).join(' · '), url, tag:`t3-${now.id}` });
-    else if (was.status === 'busy' && now.status === 'failed') push.notify({ title:`⚠️ ${now.title}`, body:now.error || 'Failed. Tap to see what happened.', url, tag:`t3-${now.id}` });
+    if (now.status === 'waiting') push.notify({ title:now.title, body:'Needs your input', url, tag:`t3-${now.id}` });
+    else if (was.status === 'busy' && now.status === 'done') push.notify({ title:now.title, body:'Done', url, tag:`t3-${now.id}` });
+    else if (was.status === 'busy' && now.status === 'failed') push.notify({ title:now.title, body:'Failed · Tap for details', url, tag:`t3-${now.id}` });
   });
 
   // Cursor and VS Code chats: a ping when one finishes.
@@ -56,8 +53,8 @@ export function start() {
   setInterval(async () => {
     for (const c of await ides.list().catch(() => [])) {
       const key = `${c.app}:${c.id}`;
-      if (c.status === 'waiting' && ideWas.has(key) && ideWas.get(key) !== 'waiting') push.notify({ title:`✋ ${c.title}`, body:'Cursor · Waiting for you to approve a step', url:`/#/i/${c.app}/${c.id}`, tag:`ide-${key}` });
-      if (['busy', 'waiting'].includes(ideWas.get(key)) && c.status === 'done') push.notify({ title:`✅ ${c.title}`, body:`${c.app === 'cursor' ? 'Cursor' : 'VS Code'} · Done`, url:`/#/i/${c.app}/${c.id}`, tag:`ide-${key}` });
+      if (c.status === 'waiting' && ideWas.has(key) && ideWas.get(key) !== 'waiting') push.notify({ title:c.title, body:'Needs approval', url:`/#/i/${c.app}/${c.id}`, tag:`ide-${key}` });
+      if (['busy', 'waiting'].includes(ideWas.get(key)) && c.status === 'done') push.notify({ title:c.title, body:'Done', url:`/#/i/${c.app}/${c.id}`, tag:`ide-${key}` });
       ideWas.set(key, c.status);
     }
   }, 15000).unref();
@@ -76,7 +73,7 @@ export function start() {
     for (const b of busy) {
       if (Date.now() - b.at < STUCK_AFTER || stuckSeen.get(b.key) === b.at) continue;
       stuckSeen.set(b.key, b.at);
-      push.notify({ title:`⏳ ${b.title}`, body:`${b.project ? `${b.project} · ` : ''}No new output for ${Math.round((Date.now() - b.at) / 60000)} minutes. It may be stuck.`, url:b.url, tag:`stuck-${b.key}` });
+      push.notify({ title:b.title, body:`No output for ${Math.round((Date.now() - b.at) / 60000)} min`, url:b.url, tag:`stuck-${b.key}` });
     }
   }, 60000).unref();
 
@@ -92,11 +89,11 @@ export function start() {
         const hitAt = runsOutAt(w);
         if (hitAt && hitAt - Date.now() < 48 * 3600000 && w.percent >= 20 && w.percent < 90 && !warned.has(`pace:${key}`)) {
           warned.add(`pace:${key}`);
-          push.notify({ title:`📉 ${names[u.harness]} ${w.label.toLowerCase()} limit runs out ~${day(hitAt)}`, body:`At this rate. ${w.percent}% used, resets ${day(w.resetsAt)}.`, url:'/#/', tag:`pace-${key}` });
+          push.notify({ title:`${names[u.harness]} · ${w.label} limit`, body:`May run out ${day(hitAt)} · ${w.percent}% used`, url:'/#/', tag:`pace-${key}` });
         }
         if (w.percent >= 90 && !warned.has(key)) {
           warned.add(key);
-          push.notify({ title:`${names[u.harness]}: ${w.label.toLowerCase()} limit at ${w.percent}%`, body:w.resetsAt ? `Resets ${new Date(w.resetsAt).toLocaleString([], { weekday:'short', hour:'numeric', minute:'2-digit' })}.` : '', url:'/#/', tag:`limit-${key}` });
+          push.notify({ title:`${names[u.harness]} · ${w.label} limit`, body:`${w.percent}% used${w.resetsAt ? ` · Resets ${day(w.resetsAt)}` : ''}`, url:'/#/', tag:`limit-${key}` });
         }
       }
     }
@@ -105,10 +102,9 @@ export function start() {
   approvals.onRequest(r => {
     if (r.tool === 'AskUserQuestion') {
       const q = r.input?.questions?.[0];
-      return describe(r.sessionId, r.cwd).then(d => push.notify({ title:`✋ ${d.title}`, body:clip(q?.question || 'Needs your input', 160), url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` }));
+      return describe(r.sessionId, r.cwd).then(d => push.notify({ title:d.title, body:clip(q?.question || 'Needs your input', 90), url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` }));
     }
-    const what = r.input?.command || r.input?.file_path || r.input?.url || '';
-    describe(r.sessionId, r.cwd).then(d => push.notify({ title:`✋ ${d.title}`, body:clip(`Allow ${r.tool}? ${what}`, 160), url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` }));
+    describe(r.sessionId, r.cwd).then(d => push.notify({ title:d.title, body:`Allow ${r.tool}?`, url:r.sessionId ? `/#/s/claude/${r.sessionId}` : '/', tag:`ask-${r.sessionId || r.id}` }));
   });
   // A Mac on battery stops every agent when it dies: warn at 20% and again at 10%, once per discharge.
   let warnedAt = 101;
@@ -119,8 +115,8 @@ export function start() {
     const level = [10, 20].find(l => b.percent <= l && l < warnedAt);
     if (!level) return;
     warnedAt = level;
-    push.notify({ title:`🪫 Mac battery at ${b.percent}%`, body:`Plug it in, or your agents stop when it runs out${b.remaining ? ` (about ${b.remaining.replace(':', 'h ')}m left)` : ''}.`, url:'/#/', tag:'battery' });
+    push.notify({ title:`Mac battery · ${b.percent}%`, body:'Plug in your Mac', url:'/#/', tag:'battery' });
   }, 60000).unref();
 
-  auth.onDeviceWaiting(d => push.notify({ title:'New device wants to sign in', body:`${d.name}. Approve it on your Mac if this was you.`, url:'/#/settings', tag:`device-${d.id}` }));
+  auth.onDeviceWaiting(d => push.notify({ title:'New sign-in request', body:`${clip(d.name, 50)} · Review on your Mac`, url:'/#/settings', tag:`device-${d.id}` }));
 }

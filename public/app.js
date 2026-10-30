@@ -392,7 +392,7 @@ const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const isPhone = /iPhone|iPad|iPod|Android/.test(navigator.userAgent);
 let installPrompt = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
-window.addEventListener('appinstalled', () => { installPrompt = null; toast('AgentsEye is on your Home Screen'); });
+window.addEventListener('appinstalled', () => { installPrompt = null; toast('Added to Home Screen'); });
 
 function installSheet() {
   if (installPrompt) {
@@ -411,7 +411,7 @@ function installSheet() {
     const link = relay.on && relay.info.macId ? `${location.origin}/m/${relay.info.macId}` : location.href.split('#')[0];
     // x-safari-https:// is iOS's own way to hand a link from another browser to Safari.
     card.querySelector('#open-safari')?.addEventListener('click', () => { location.href = `x-safari-${link}`; });
-    card.querySelector('#copy-url')?.addEventListener('click', () => navigator.clipboard.writeText(link).then(() => toast('Copied. Paste it into Safari.')));
+    card.querySelector('#copy-url')?.addEventListener('click', () => navigator.clipboard.writeText(link).then(() => toast('Copied · Open in Safari')));
   });
 }
 
@@ -470,11 +470,11 @@ async function guideView() {
       ${done < steps.length ? '<button class="ghost" id="hide-guide" style="width:100%">Hide from Home</button>' : ''}`;
     view.querySelector('[data-install]')?.addEventListener('click', installSheet);
     view.querySelector('[data-push]')?.addEventListener('click', () => attempt(async () => { await enablePush(); render(); }, 'Notifications on'));
-    view.querySelector('[data-hook]')?.addEventListener('click', () => attempt(async () => { await api('/api/approvals/hook', { install:true }); render(); }, 'On. Restart Claude sessions to use it.'));
-    view.querySelector('[data-awake]')?.addEventListener('click', () => attempt(async () => { await api('/api/power/keep-awake', { mode:'plugged' }); render(); }, 'Keeping your Mac awake while plugged in'));
+    view.querySelector('[data-hook]')?.addEventListener('click', () => attempt(async () => { await api('/api/approvals/hook', { install:true }); render(); }, 'Installed · Restart Claude sessions'));
+    view.querySelector('[data-awake]')?.addEventListener('click', () => attempt(async () => { await api('/api/power/keep-awake', { mode:'plugged' }); render(); }, 'Keep awake on · When plugged in'));
     view.querySelector('[data-login]')?.addEventListener('click', () => attempt(async () => {
       await api('/api/service/install', {});
-      toast('AgentsEye is restarting in the background…');
+      toast('Restarting AgentsEye…');
       setTimeout(() => location.reload(), 8000);
     }));
     $('#hide-guide')?.addEventListener('click', () => { localStorage.setItem('guide-hidden', '1'); location.hash = '#/'; });
@@ -549,7 +549,7 @@ function openWhenReady(started, name) {
       location.hash = `#/s/${started.harness}/${encodeURIComponent(r.id)}`;
       return;
     }
-    if (++tries > 45) { closeSheet(); toast('Still starting. It will show up under Live sessions.'); return; }
+    if (++tries > 45) { closeSheet(); toast('Still starting · Check Agents shortly'); return; }
     setTimeout(tick, 1500);
   };
   setTimeout(tick, 1500);
@@ -571,7 +571,7 @@ function bindRelayRow(root, r, after) {
     try { await api('/api/relay', { url:root.querySelector('#relay-url').value.trim(), enabled:toggle.checked, password:root.querySelector('#relay-pw')?.value || undefined }); }
     catch (e) { toggle.checked = !toggle.checked; throw e; }
     setTimeout(after, 1200);
-  }, toggle.checked ? 'Connecting to the relay…' : 'Relay off'));
+  }, toggle.checked ? 'Connecting…' : 'Relay off'));
 }
 
 // ---------- Mac controls ----------
@@ -1195,7 +1195,7 @@ function bindApprovals(root, after) {
     });
     card.querySelector('[data-send]')?.addEventListener('click', submit);
   });
-  root.querySelectorAll('[data-always]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/approvals/decide', { id:b.dataset.always, decision:'allow', always:true }); after(); }, 'Allowed. Claude won\'t ask again for this here.'));
+  root.querySelectorAll('[data-always]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/approvals/decide', { id:b.dataset.always, decision:'allow', always:true }); after(); }, 'Always allowed here'));
   root.querySelectorAll('[data-allow]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/approvals/decide', { id:b.dataset.allow, decision:'allow' }); after(); }, 'Allowed'));
   root.querySelectorAll('[data-deny]').forEach(b => b.onclick = () => sheet(`<h3>Deny this request?</h3><input id="why" placeholder="Tell Claude what to do instead (optional)"><button class="bad" id="do-deny">Deny</button><button class="ghost" data-close>Cancel</button>`, card => {
     card.querySelector('#do-deny').onclick = () => { closeSheet(); attempt(async () => { await api('/api/approvals/decide', { id:b.dataset.deny, decision:'deny', message:card.querySelector('#why').value }); b.closest('[data-ask]')?.remove(); after(); }, 'Denied'); };
@@ -1451,7 +1451,7 @@ async function settingsView() {
     $('#lid')?.addEventListener('change', e => attempt(async () => {
       try { await api('/api/power/lid', { on:e.target.checked }, { timeout:130000 }); } catch (err) { e.target.checked = !e.target.checked; throw err; }
       shown = ''; render();
-    }, e.target.checked ? 'Will keep running with the lid closed' : 'Normal sleep restored'));
+    }, e.target.checked ? 'Lid-closed mode on' : 'Normal sleep restored'));
     $('#lock-now')?.addEventListener('click', async () => { if (await lockMac()) setTimeout(() => { shown = ''; render(); }, 1500); });
     if ($('#macs')) bindMacs($('#macs'), () => { shown = ''; render(); });
     view.querySelectorAll('[data-when]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/approvals/settings', { when:b.dataset.when }); shown = ''; render(); }, 'Saved'));
@@ -1462,7 +1462,7 @@ async function settingsView() {
     $('#copy')?.addEventListener('click', () => navigator.clipboard.writeText(s.phoneUrl).then(() => toast('Copied')));
     $('#push')?.addEventListener('change', e => attempt(async () => { await (e.target.checked ? enablePush() : disablePush()); shown = ''; render(); }, e.target.checked ? 'Notifications on' : 'Notifications off'));
     $('#test-push')?.addEventListener('click', () => attempt(() => api('/api/push/test', {}), 'Sent'));
-    $('#hook')?.addEventListener('click', () => attempt(async () => { await api('/api/approvals/hook', { install:true }); render(); }, 'Installed. Restart Claude sessions to use it.'));
+    $('#hook')?.addEventListener('click', () => attempt(async () => { await api('/api/approvals/hook', { install:true }); render(); }, 'Installed · Restart Claude sessions'));
     $('#hold')?.addEventListener('change', e => attempt(() => api('/api/approvals/settings', { hold:e.target.checked }), 'Saved'));
     $('#wait')?.addEventListener('change', e => attempt(() => api('/api/approvals/settings', { waitSeconds:Number(e.target.value) }), 'Saved'));
     $('#others')?.addEventListener('click', async () => { if (await confirmSheet('Sign out every other device?', '', 'Sign out others', true)) attempt(async () => { await api('/api/devices/others', {}); render(); }); });

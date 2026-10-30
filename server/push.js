@@ -26,6 +26,12 @@ export function unsubscribe(deviceId) {
 }
 export const subscribed = deviceId => Boolean(subs()[deviceId]);
 
+// Keep every push to a short title and one line, including names supplied by agents.
+const shortText = (value, limit) => {
+  const chars = Array.from(String(value || '').replace(/\s+/g, ' ').trim());
+  return chars.length > limit ? `${chars.slice(0, limit - 1).join('')}…` : chars.join('');
+};
+
 export async function notify({ title, body, url = '/', tag }) {
   const k = keys();
   // Apple rejects push senders that identify as localhost, so use a real-looking contact (override with AGENTSEYE_PUSH_CONTACT).
@@ -36,7 +42,7 @@ export async function notify({ title, body, url = '/', tag }) {
   const live = new Set(listDevices().map(d => d.id));
   for (const device of Object.keys(all)) if (!live.has(device)) { delete all[device]; changed = true; }
   await Promise.all(Object.entries(all).map(async ([device, sub]) => {
-    try { await webpush.sendNotification(sub, JSON.stringify({ title, body, url, tag }), { TTL:600 }); }
+    try { await webpush.sendNotification(sub, JSON.stringify({ title:shortText(title, 60) || 'AgentsEye', body:shortText(body, 100), url, tag }), { TTL:600 }); }
     catch (error) { if (error.statusCode === 404 || error.statusCode === 410) { delete all[device]; changed = true; } }
   }));
   if (changed) writeJson(subsFile, all);
