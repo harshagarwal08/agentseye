@@ -443,3 +443,16 @@ button.primary.busy::after, button.good.busy::after, .send.busy::after { border-
 .shared-foot { text-align:center; padding:16px; }
 .msg th, .msg td { min-width:6.5em; }
 .msg table code { white-space:nowrap; }
+
+/* Settings: the Mac at a glance, with Lock up top. */
+.mac-card { background:var(--card); border-radius:var(--radius); padding:16px; margin:2px 0 4px; display:grid; gap:12px; }
+.mac-card.locked { box-shadow:inset 0 0 0 1.5px color-mix(in srgb, var(--green) 55%, transparent); }
+.mac-card .mc-top { display:flex; align-items:center; gap:12px; }
+.mac-card .mc-top .grow { flex:1; min-width:0; }
+.mac-card .mc-top b { font-size:17px; }
+.mac-card .s { color:var(--muted); font-size:13px; margin-top:2px; }
+.mc-icon { width:44px; height:44px; flex:none; border-radius:12px; background:var(--card-2); display:grid; place-items:center; font-size:22px; }
+.mac-card .batt { border-left:0; padding:5px 10px; background:var(--card-2); border-radius:999px; font-size:13px; font-weight:600; }
+.lock-btn { width:100%; min-height:50px; font-size:16px; font-weight:700; }
+.mc-lock { display:flex; align-items:center; justify-content:center; gap:8px; min-height:50px; border-radius:12px; background:color-mix(in srgb, var(--green) 16%, var(--card)); color:var(--green); font-weight:700; font-size:16px; }
+.mc-lock span { font-weight:500; font-size:13px; opacity:.85; }

@@ -560,8 +560,9 @@ function bindRelayRow(root, r, after) {
 
 // ---------- Mac controls ----------
 async function lockMac() {
-  if (!await confirmSheet('Lock your Mac?', 'The screen turns off and locks. Agents keep running; your password is needed to use it.', 'Lock now')) return;
-  attempt(() => api('/api/power/lock', {}), 'Mac locked');
+  if (!await confirmSheet('Lock your Mac?', 'The screen turns off and locks. Agents keep running; your password is needed to use it.', 'Lock now')) return false;
+  await attempt(() => api('/api/power/lock', {}), 'Mac locked');
+  return true;
 }
 
 // ---------- Limits ----------
@@ -633,6 +634,21 @@ const grow = ta => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scr
 // The Mac's battery next to its name: ⚡ on the charger, red when low and draining.
 const batteryHtml = b => (b ? `<span class="batt${!b.plugged && b.percent <= 20 ? ' low' : ''}" title="${b.plugged ? (b.charging ? 'Charging' : 'On power') : `On battery${b.remaining ? `, ${b.remaining} left` : ''}`}">${b.plugged ? '⚡' : '🔋'}${b.percent}%</span>` : '');
 
+// The Mac at a glance, top of Settings: battery, whether agents can keep running, and locking it from here.
+function macCard(s) {
+  const p = s.power;
+  const awake = p.keepAwake === 'always' || (p.keepAwake === 'plugged' && p.onPower);
+  const locked = p.screen?.locked;
+  const since = p.screen?.since ? new Date(p.screen.since).toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }) : '';
+  return `<div class="mac-card${locked ? ' locked' : ''}">
+    <div class="mc-top"><div class="mc-icon">💻</div><div class="grow"><b>${esc(s.host || 'Your Mac')}</b>
+      <div class="s">${awake ? 'Stays awake · agents keep running' : p.keepAwake === 'off' ? 'Can sleep · agents stop when it does' : 'On battery · can sleep'}</div></div>${batteryHtml(p.battery)}</div>
+    ${locked ? `<div class="mc-lock">🔒 Your Mac is locked${since ? `<span>since ${esc(since)}</span>` : ''}</div>`
+      : `<button class="primary lock-btn" id="lock-now" ${p.lockImmediate ? '' : 'disabled'}>🔒 Lock your Mac</button>
+        <div class="small muted">${p.lockImmediate ? 'Locks the screen right away. Agents keep running.' : 'To lock from here, turn on "Require password immediately" in System Settings → Lock Screen on the Mac.'}</div>`}
+  </div>`;
+}
+
 // Where an agent runs on the Mac: Terminal, VS Code, Cursor, T3 Code, the Claude or Codex app…
 const appLabel = a => (a.source === 't3' ? 'T3 Code' : a.source === 'ide' ? { cursor:'Cursor', vscode:'VS Code', gemini:'Terminal' }[a.app] || ''
   : a.app || (['claude-vscode', 'codex-vscode'].includes(a.entrypoint) ? 'VS Code' : 'Terminal'));
@@ -689,7 +705,7 @@ async function homeView() {
     const d = data = await api('/api/home');
     rememberMac(d.host);
     const html = `
-      <div class="top"><h1>Agents</h1>${macs().length > 1 ? `<button class="mac mac-switch" id="mac-switch"><span class="dot green"></span>${esc(d.host)}${batteryHtml(d.battery)} ▾</button>` : `<span class="mac"><span class="dot green"></span>${esc(d.host)}${batteryHtml(d.battery)}</span>`}</div>
+      <div class="top"><h1>Agents</h1>${macs().length > 1 ? `<button class="mac mac-switch" id="mac-switch"><span class="dot green"></span>${esc(d.host)}${d.locked ? ' 🔒' : ''}${batteryHtml(d.battery)} ▾</button>` : `<span class="mac"><span class="dot green"></span>${esc(d.host)}${d.locked ? ' <span title="Screen locked">🔒</span>' : ''}${batteryHtml(d.battery)}</span>`}</div>
       ${isPhone && !standalone() && !localStorage.getItem('install-hidden') ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Get the app</b><div class="small muted">Add to your Home Screen for full screen and notifications.</div></div><button class="small primary" id="install">Add</button><button class="ghost small" id="install-x" aria-label="Dismiss">✕</button></div>' : ''}
       ${guideCard()}
       ${d.devicesWaiting.map(dev => `<div class="banner"><div class="grow"><b>${esc(dev.name)}</b> wants to sign in<div class="small muted">${ago(dev.createdAt)}${me.local ? '' : ' · approve it on the Mac'}</div></div>${me.local ? `<button class="good small" data-approve="${dev.id}">Approve</button><button class="ghost small" data-reject="${dev.id}">✕</button>` : ''}</div>`).join('')}
@@ -1360,9 +1376,9 @@ async function settingsView() {
     const s = await api('/api/settings');
     const t = s.tunnel;
     const pushOn = await pushState();
-    const html = `<div class="top"><h1>Settings</h1><a href="#/guide"><button class="small">Start guide</button></a></div>
-      ${isPhone && !standalone() ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Add AgentsEye to your Home Screen</b><div class="small muted">Opens full screen, needed for notifications on iPhone.</div></div><button class="small primary" id="install-s">How</button></div>' : ''}
-      <div class="section"><h2>Phone access</h2></div>
+    const p = s.power;
+    // Phone access is set up at the Mac, so it comes first there; on a phone the everyday settings lead.
+    const phoneAccess = `      <div class="section"><h2>Phone access</h2></div>
       <div class="group">
         ${relayRow(s.relay)}
         <div class="item"><div class="grow"><b>Private link with Tailscale</b><div class="s">${{ missing:'A free app that links your own devices. The address never changes and nobody else can reach it.', 'signed-out':'Installed. Open Tailscale and sign in, on this Mac and on your phone.', stopped:'Tailscale is off. Open it and connect.', running:s.tailscale.serving ? `On · ${esc(s.tailscale.url)}` : 'Connected. Turn on to serve AgentsEye to your devices.' }[s.tailscale.state] || 'Unavailable'}</div></div>
@@ -1373,15 +1389,18 @@ async function settingsView() {
           <div class="item"><div class="grow small muted">On iPhone: in Safari tap Share → <b>Add to Home Screen</b>, open AgentsEye from there, then turn on notifications below.</div></div>` : ''}
         ${!me.local ? `<div class="item"><div class="grow small muted">Connected through ${esc(location.host)}</div></div>` : ''}
         ${t.error && t.status !== 'missing' ? `<div class="item small" style="color:var(--red)">${esc(t.error)}</div>` : ''}
-      </div>
-      ${relay.on ? `<div class="section"><h2>Your Macs</h2></div><div class="group" id="macs">${macsHtml()}</div>` : ''}
-      <div class="section"><h2>When you're away</h2></div>
+      </div>`;
+    const html = `<div class="top"><h1>Settings</h1><a href="#/guide"><button class="small">Start guide</button></a></div>
+      ${isPhone && !standalone() ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Add AgentsEye to your Home Screen</b><div class="small muted">Opens full screen, needed for notifications on iPhone.</div></div><button class="small primary" id="install-s">How</button></div>' : ''}
+      ${macCard(s)}
+      ${me.local ? phoneAccess : ''}
+      <div class="section"><h2>Keep agents running</h2></div>
       <div class="group">
-        <div class="item"><div class="grow"><b>Keep your Mac awake</b><div class="s">Agents stop when the Mac sleeps. The screen can still turn off and lock.${s.power.keepAwake === 'plugged' && !s.power.onPower ? ' <b>On battery now, so not active.</b>' : ''}</div></div></div>
-        <div class="item"><div class="seg" style="flex:1">${[['off', 'Off'], ['plugged', 'When plugged in'], ['always', 'Always']].map(([k, v]) => `<button data-awake="${k}" class="${s.power.keepAwake === k ? 'on' : ''}">${v}</button>`).join('')}</div></div>
-        <div class="item"><div class="grow"><b>Keep running with the lid closed</b><div class="s">${s.power.lidClosedOk ? '<b>On.</b> The Mac never sleeps, even closed. It gets warm in a bag and drains the battery; turn off when you travel.' : 'macOS sleeps when the lid closes, even with keep-awake on. This changes a system setting and asks for your Mac password.'}</div></div>
-          ${me.local ? `<label class="switch"><input type="checkbox" id="lid" ${s.power.lidClosedOk ? 'checked' : ''}><i></i></label>` : '<span class="small muted">On the Mac</span>'}</div>
-        <div class="item"><div class="grow"><b>Lock the screen</b><div class="s">${s.power.lockImmediate ? 'Locks right away. Agents keep running; nobody can use the Mac without your password.' : 'Turn on "Require password immediately" in System Settings → Lock Screen first.'}</div></div><button class="small" id="lock-now" ${s.power.lockImmediate ? '' : 'disabled'}>Lock now</button></div>
+        <div class="item"><div class="grow"><b>Keep your Mac awake</b><div class="s">${p.keepAwake === 'off' ? 'Agents stop when the Mac sleeps.' : p.keepAwake === 'plugged' && !p.onPower ? '<b>On battery now, so not active.</b> Choose Always to keep going unplugged.' : 'Agents keep running. The screen can still turn off and lock.'}</div></div></div>
+        <div class="item"><div class="seg" style="flex:1">${[['off', 'Off'], ['plugged', 'When plugged in'], ['always', 'Always']].map(([k, v]) => `<button data-awake="${k}" class="${p.keepAwake === k ? 'on' : ''}">${v}</button>`).join('')}</div></div>
+        ${p.admin || p.lidClosedOk ? `<div class="item"><div class="grow"><b>Keep running with the lid closed</b><div class="s">${p.lidClosedOk ? '<b>On.</b> The Mac never sleeps, even closed. It gets warm in a bag and drains the battery; turn off when you travel.' : 'macOS sleeps when the lid closes, even with keep-awake on. This changes a system setting and asks for your Mac password.'}</div></div>
+          ${me.local ? `<label class="switch"><input type="checkbox" id="lid" ${p.lidClosedOk ? 'checked' : ''}><i></i></label>` : '<span class="small muted">On the Mac</span>'}</div>`
+        : `<div class="item"><div class="grow"><b>Closing the lid puts it to sleep</b><div class="s">Changing that needs admin rights on this Mac. Instead, leave the lid open and lock it, or plug in a charger and an external screen (a $5 HDMI dummy plug works) and it stays awake closed.</div></div></div>`}
       </div>
       <div class="section"><h2>Notifications</h2></div>
       <div class="group"><div class="item"><div class="grow"><b>Notify this device</b><div class="s">When an agent needs you, finishes, looks stuck, or a limit will run out early.${macs().length > 1 ? ' One Mac at a time: turning it on here moves notifications to this Mac.' : ''}</div></div>
@@ -1398,6 +1417,8 @@ async function settingsView() {
         ${s.hook.installed ? `<div class="item"><div class="grow small">If nobody answers, Claude asks in its own window after</div><select id="wait" style="width:auto">${[60, 120, 300, 600].map(n => `<option value="${n}" ${s.approvals.waitSeconds === n ? 'selected' : ''}>${n / 60} min</option>`).join('')}</select></div>` : ''}
       </div>
       ${s.history.length ? `<div class="section"><h2>Recent decisions</h2></div><div class="list">${s.history.slice(0, 5).map(h => `<div class="row"><div class="grow"><div class="t mono small">${esc(summarize(h.input))}</div><div class="s">${esc(h.tool)} · ${esc(base(h.cwd))} · ${ago(h.decidedAt)}</div></div><span class="chip ${h.decision === 'allow' ? 'green' : h.decision === 'deny' ? 'red' : ''}">${h.decision === 'terminal' ? 'in app' : h.decision}</span></div>`).join('')}</div>` : ''}
+      ${!me.local ? phoneAccess : ''}
+      ${relay.on ? `<div class="section"><h2>Your Macs</h2></div><div class="group" id="macs">${macsHtml()}</div>` : ''}
       <div class="section"><h2>Devices</h2>${s.devices.length > 1 ? '<button class="small ghost" id="others">Sign out others</button>' : ''}</div>
       <div class="group">${s.devices.map(d => `<div class="item"><div class="grow"><b>${esc(d.name)}</b> ${d.id === s.deviceId ? '<span class="chip green">This device</span>' : ''}${d.approved ? '' : '<span class="chip amber">Waiting</span>'}<div class="s">${d.remote ? 'Phone link' : 'On this Mac'} · ${ago(d.lastSeen)}</div></div>
         ${!d.approved && me.local ? `<button class="small good" data-approve="${d.id}">Approve</button>` : ''}${d.id !== s.deviceId ? `<button class="small ghost" data-remove="${d.id}">${d.approved ? 'Sign out' : 'Reject'}</button>` : ''}</div>`).join('')}</div>
@@ -1415,7 +1436,7 @@ async function settingsView() {
       try { await api('/api/power/lid', { on:e.target.checked }, { timeout:130000 }); } catch (err) { e.target.checked = !e.target.checked; throw err; }
       shown = ''; render();
     }, e.target.checked ? 'Will keep running with the lid closed' : 'Normal sleep restored'));
-    $('#lock-now')?.addEventListener('click', lockMac);
+    $('#lock-now')?.addEventListener('click', async () => { if (await lockMac()) setTimeout(() => { shown = ''; render(); }, 1500); });
     if ($('#macs')) bindMacs($('#macs'), () => { shown = ''; render(); });
     view.querySelectorAll('[data-when]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/approvals/settings', { when:b.dataset.when }); shown = ''; render(); }, 'Saved'));
     $('#summary')?.addEventListener('change', e => attempt(async () => { await api('/api/summary/settings', { on:e.target.checked }); shown = ''; render(); }, 'Saved'));

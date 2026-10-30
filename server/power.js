@@ -38,8 +38,19 @@ export async function setKeepAwake(mode) {
   return status();
 }
 
+// Whether the screen is locked right now: macOS marks the console session while the lock screen is up.
+let lockedSince = 0;
+export async function screenLock() {
+  const locked = /"CGSSessionScreenIsLocked"=Yes/.test((await run('/usr/sbin/ioreg', ['-n', 'Root', '-d1'])).stdout);
+  lockedSince = locked ? lockedSince || Date.now() : 0;
+  return { locked, since:lockedSince };
+}
+
+// Keeping the Mac awake with the lid closed means changing a system setting, which only an administrator can do.
+const isAdmin = async () => (await run('/usr/bin/id', ['-Gn'])).stdout.split(/\s+/).includes('admin');
+
 export async function status() {
-  const [pm, ps, lock] = await Promise.all([run('/usr/bin/pmset', ['-g']), run('/usr/bin/pmset', ['-g', 'ps']), run('/usr/sbin/sysadminctl', ['-screenLock', 'status'])]);
+  const [pm, ps, lock, admin, screen, batt] = await Promise.all([run('/usr/bin/pmset', ['-g']), run('/usr/bin/pmset', ['-g', 'ps']), run('/usr/sbin/sysadminctl', ['-screenLock', 'status']), isAdmin(), screenLock(), battery()]);
   return {
     keepAwake:settings().keepAwake,
     holding:Boolean(caffeinate),
@@ -47,6 +58,7 @@ export async function status() {
     lidClosedOk:/SleepDisabled\s+1/.test(pm.stdout),
     // Locking works by turning the display off, which only locks if the password is asked for right away.
     lockImmediate:/immediate/.test(lock.stdout + lock.stderr),
+    admin, screen, battery:batt,
   };
 }
 

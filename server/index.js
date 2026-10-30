@@ -175,7 +175,7 @@ const routes = {
   'GET /api/badges':() => ({ version:appVersion(), needsYou:needsYou(), updates:updateCount(), devicesWaiting:pendingDevices().length }),
   'GET /api/home':async () => {
     const [list, limits] = await Promise.all([allAgents(), usage()]);
-    return { agents:list, limits, t3:t3.status(), t3Projects:t3.projects(), approvals:approvals.list().pending, devicesWaiting:pendingDevices(), host:os.hostname().replace(/\.local$/, ''), battery:await power.battery().catch(() => null) };
+    return { agents:list, limits, t3:t3.status(), t3Projects:t3.projects(), approvals:approvals.list().pending, devicesWaiting:pendingDevices(), host:os.hostname().replace(/\.local$/, ''), battery:await power.battery().catch(() => null), locked:(await power.screenLock().catch(() => ({}))).locked || false };
   },
 
   'GET /api/session':async (_, url) => {
@@ -312,7 +312,7 @@ const routes = {
       version:updater.status(), tailscale:await tailscale.status(), power:await power.status(), phoneUrl:phoneUrl(), relay:{ ...relay.status(), keyReady:Boolean(auth.relayKeyInfo()) },
       tunnel:{ ...tunnel.status(), status:installed ? tunnel.status().status : 'missing' }, installingCloudflared:updates.installing('cloudflared'), pairingAt,
       hook:hookStatus(), approvals:approvals.settings(), history:approvals.list().history, summary:summarySettings(),
-      devices:auth.listDevices(), deviceId:device.id,
+      devices:auth.listDevices(), deviceId:device.id, host:os.hostname().replace(/\.local$/, ''),
     };
   },
   'POST /api/relay':async (b, _, req) => {
