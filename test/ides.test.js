@@ -32,7 +32,25 @@ fs.writeFileSync(path.join(ws, 'chatSessions', 's1.jsonl'), [
   { kind:2, k:['requests'], v:[{ message:{ text:'add a checkout page' }, timestamp:now, response:[{ kind:'toolInvocationSerialized' }, { value:'Added ' }, { kind:'markdownContent', content:{ value:'the page.' } }], modelState:{ value:1, completedAt:now } }] },
 ].map(l => JSON.stringify(l)).join('\n'));
 
+const gem = path.join(home, '.gemini', 'tmp', 'shop');
+fs.mkdirSync(path.join(gem, 'chats'), { recursive:true });
+fs.writeFileSync(path.join(gem, '.project_root'), '/Users/me/shop');
+fs.writeFileSync(path.join(gem, 'chats', 'session-1.jsonl'), [
+  { sessionId:'g1', startTime:'2026-10-29T10:00:00Z', kind:'main' },
+  { id:'a', timestamp:'2026-10-29T10:00:01Z', type:'user', content:[{ text:'list the routes' }] },
+  { $set:{ lastUpdated:'2026-10-29T10:00:01Z' } },
+  { id:'b', timestamp:'2026-10-29T10:00:05Z', type:'gemini', content:'There are three routes.' },
+].map(l => JSON.stringify(l)).join('\n'));
+
 const ides = await import('../server/ides.js');
+
+test('Gemini CLI chats are listed and read back', async () => {
+  const g = (await ides.list()).find(c => c.app === 'gemini');
+  assert.equal(g.title, 'list the routes');
+  assert.equal(g.project, 'shop');
+  const t = await ides.thread('gemini', g.id);
+  assert.deepEqual(t.messages.map(m => [m.role, m.text]), [['user', 'list the routes'], ['assistant', 'There are three routes.']]);
+});
 
 test('Cursor and VS Code chats are listed with their state', async () => {
   const list = await ides.list();

@@ -132,12 +132,60 @@ function copilotList() {
   return list;
 }
 
+// Gemini CLI keeps each chat as a .jsonl in ~/.gemini/tmp/<project>/chats, next to a file naming the project folder.
+const geminiTmp = path.join(HOME, '.gemini', 'tmp');
+function geminiFiles() {
+  const out = [];
+  let projects = [];
+  try { projects = fs.readdirSync(geminiTmp); } catch { return out; }
+  for (const p of projects) {
+    const dir = path.join(geminiTmp, p, 'chats');
+    let cwd = '';
+    try { cwd = fs.readFileSync(path.join(geminiTmp, p, '.project_root'), 'utf8').trim(); } catch {}
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch { continue; }
+    for (const n of names) if (n.endsWith('.jsonl')) out.push({ file:path.join(dir, n), cwd, at:mtime(path.join(dir, n)) });
+  }
+  return out.filter(f => f.at > Date.now() - RECENT).sort((a, b) => b.at - a.at);
+}
+function readGemini(file) {
+  const messages = [];
+  let id = path.basename(file, '.jsonl');
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (e.sessionId) id = e.sessionId;
+    const text = typeof e.content === 'string' ? e.content : Array.isArray(e.content) ? e.content.map(c => c.text || '').join('') : '';
+    if ((e.type === 'user' || e.type === 'gemini') && text.trim()) messages.push({ role:e.type === 'user' ? 'user' : 'assistant', text:text.trim(), time:e.timestamp });
+  }
+  return { id, messages };
+}
+function geminiList() {
+  const list = [];
+  for (const f of geminiFiles()) {
+    let chat;
+    try { chat = readGemini(f.file); } catch { continue; }
+    const first = chat.messages.find(m => m.role === 'user');
+    if (!first) continue;
+    list.push({ source:'ide', app:'gemini', harness:'gemini', id:path.basename(f.file, '.jsonl'), file:f.file, title:first.text.split('\n')[0].slice(0, 80), project:f.cwd ? path.basename(f.cwd) : 'Gemini', cwd:f.cwd,
+      status:Date.now() - f.at < 60000 && chat.messages.at(-1)?.role === 'user' ? 'busy' : 'done', updatedAt:f.at });
+    if (list.length >= PER_APP) break;
+  }
+  return list;
+}
+
 export async function list() {
   const cursor = (await cursorList().catch(() => [])).filter(c => c.status === 'busy' || c.updatedAt > Date.now() - RECENT).slice(0, PER_APP);
-  return [...cursor, ...copilotList()].map(({ file, ...c }) => c);
+  return [...cursor, ...copilotList(), ...geminiList()].map(({ file, ...c }) => c);
 }
 
 export async function thread(app, id) {
+  if (app === 'gemini') {
+    const found = geminiFiles().find(f => path.basename(f.file, '.jsonl') === id);
+    if (!found) throw Object.assign(new Error('That Gemini chat is gone.'), { status:404 });
+    const { file, ...session } = geminiList().find(c => c.id === id) || { source:'ide', app, harness:'gemini', id, title:'Gemini chat', project:'Gemini', cwd:found.cwd, status:'done' };
+    return { session, messages:readGemini(found.file).messages.slice(-200), readOnly:true, note:'Reply to this chat with Gemini CLI on your Mac.' };
+  }
   if (app === 'cursor') {
     const session = (await cursorList()).find(c => c.id === id) || { source:'ide', app, harness:'cursor', id, title:'Cursor chat', project:'Cursor', status:'done' };
     return { session, messages:await cursorThread(id), readOnly:true, note:session.status === 'waiting' ? 'Cursor is waiting for you to approve a step. Open it on your Mac.' : 'Reply to this chat in Cursor on your Mac.' };
@@ -160,6 +208,7 @@ export async function thread(app, id) {
 
 // Bring the chat's app to the front on the Mac, in its project folder when known.
 export async function open(app, id) {
+  if (app === 'gemini') throw Object.assign(new Error('Gemini CLI runs in a terminal; open it there.'), { status:400 });
   const name = { cursor:'Cursor', vscode:'Visual Studio Code' }[app];
   if (!name) throw Object.assign(new Error('Unknown app.'), { status:400 });
   const cwd = app === 'vscode' ? copilotList().find(c => c.id === id)?.cwd : '';

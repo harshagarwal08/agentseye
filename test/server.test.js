@@ -153,6 +153,19 @@ test('photos from the phone are saved privately; other files are refused', async
   assert.equal((await call('/api/upload', { type:'text/x-sh', data:'ZWNobw==' }, { cookie:mac })).status, 400);
 });
 
+test('saved prompts are kept on the Mac; share links need the relay', async () => {
+  const saved = await call('/api/prompts', { prompts:['Run the tests', '  ', 'Ship it'] }, { cookie:mac });
+  assert.deepEqual(saved.body, ['Run the tests', 'Ship it']);
+  assert.deepEqual((await call('/api/prompts', undefined, { cookie:mac })).body, ['Run the tests', 'Ship it']);
+  assert.equal((await call('/api/share', { kind:'t3', id:'x' }, { cookie:mac })).status, 409);
+  const shares = await import('../server/shares.js');
+  const s = shares.create({ kind:'t3', agentId:'x', hours:1 });
+  assert.equal(Buffer.from(s.key, 'base64').length, 32);
+  assert.ok(shares.get(s.id) && !('key' in shares.list()[0]));
+  shares.revoke(s.id);
+  assert.equal(shares.get(s.id), null);
+});
+
 test('hook installer keeps other hooks and is idempotent', () => {
   fs.mkdirSync(path.dirname(process.env.AGENTSEYE_CLAUDE_SETTINGS), { recursive:true });
   fs.writeFileSync(process.env.AGENTSEYE_CLAUDE_SETTINGS, JSON.stringify({ model:'opus', hooks:{ PermissionRequest:[{ matcher:'Bash', hooks:[{ type:'command', command:'other' }] }] } }));

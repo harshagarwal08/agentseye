@@ -32,6 +32,7 @@ import { usage, usageHistory } from './usage.js';
 import * as ides from './ides.js';
 import * as queue from './queue.js';
 import * as git from './git.js';
+import * as shares from './shares.js';
 import { hookStatus, installHook, uninstallHook } from './hookinstall.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
@@ -213,6 +214,24 @@ const routes = {
   },
   'POST /api/queue/remove':b => { queue.remove(String(b.id)); return { ok:true }; },
   'POST /api/upload':b => saveUpload(b),
+  'GET /api/shares':() => shares.list(),
+  'POST /api/share':async b => {
+    if (!relay.link()) throw fail('Sharing needs the AgentsEye relay turned on.', 409);
+    if (!['t3', 'local', 'ide'].includes(b.kind)) throw fail('Unknown agent.');
+    const rec = shares.create({ kind:b.kind, harness:String(b.harness || ''), agentId:String(b.id), title:String(b.title || ''), hours:b.hours });
+    await sharedChat(rec).catch(error => { shares.revoke(rec.id); throw error; });
+    return { id:rec.id, expiresAt:rec.expiresAt, link:`${relay.link()}?share=${rec.id}#k=${Buffer.from(rec.key, 'base64').toString('base64url')}` };
+  },
+  'POST /api/share/revoke':b => { shares.revoke(String(b.id)); return { ok:true }; },
+  'GET /api/prompts':() => readJson(path.join(DATA, 'prompts.json'), ['Continue', 'Yes, go ahead', 'Run the tests and fix any failures', 'Commit and push it', 'Summarise what you changed']),
+  'POST /api/prompts':b => {
+    const list = (Array.isArray(b.prompts) ? b.prompts : []).map(p => String(p).trim().slice(0, 2000)).filter(Boolean).slice(0, 30);
+    writeJson(path.join(DATA, 'prompts.json'), list);
+    return list;
+  },
+  'GET /api/git/pr':async (_, url) => git.pr(await agentFolder(query(url))),
+  'POST /api/git/pr/merge':async b => git.prMerge(await agentFolder(b), b.number),
+  'POST /api/git/pr/comment':async b => git.prComment(await agentFolder(b), b.number, b.text),
   'GET /api/git':async (_, url) => git.status(await agentFolder(query(url))),
   'GET /api/git/diff':async (_, url) => git.diff(await agentFolder(query(url)), url.searchParams.get('file') || ''),
   'POST /api/git/commit':async b => git.commit(await agentFolder(b), b.message, b.push === true),
@@ -459,13 +478,37 @@ function serveManifest(res, macId) {
 // and seal the reply. Nonces are single-use and timestamps must be fresh, so captured envelopes can't be replayed.
 const seenNonces = new Map();
 let relayCryptoKey = null;
+// Someone opening a shared link: their key only unlocks that one chat, read only, until the link expires.
+async function handleShare(res, ip, nonce, box, id) {
+  const rec = shares.get(id);
+  if (!rec) throw fail('This link has expired or was turned off.', 410);
+  const key = await e2e.importKey(Buffer.from(rec.key, 'base64'));
+  let inner;
+  try { inner = await e2e.open(key, box, e2e.requestAad(nonce)); }
+  catch { auth.recordFailure(ip); throw fail('This link is incomplete. Ask for it again.', 401); }
+  if (Math.abs(Date.now() - Number(inner.ts)) > 120000) throw fail('Stale request. Check the phone\'s clock.', 409);
+  const view = await sharedChat(rec);
+  const sealed = await e2e.seal(key, { status:200, type:'application/json', disposition:'', body:Buffer.from(JSON.stringify(view)).toString('base64') }, e2e.responseAad(nonce));
+  send(res, 200, { box:sealed });
+}
+async function sharedChat(rec) {
+  let session;
+  let messages;
+  if (rec.kind === 't3') ({ session, messages } = await t3.thread(rec.agentId));
+  else if (rec.kind === 'ide') ({ session, messages } = await ides.thread(rec.harness, rec.agentId));
+  else { session = await agents.findSession(rec.harness, rec.agentId); messages = agents.transcript(rec.harness, rec.agentId, session.cwd).filter(m => m.role !== 'tool'); }
+  return { title:rec.title || session.title, harness:session.harness || rec.harness, status:session.status === 'busy' ? 'busy' : 'idle', expiresAt:rec.expiresAt,
+    messages:messages.slice(-120).map(m => ({ role:m.role, text:m.text, time:m.time })) };
+}
+
 async function handleEnvelope(req, res) {
   const info = auth.relayKeyInfo();
   if (!info) throw fail('Relay encryption is not set up on this Mac yet.', 409);
   const ip = clientIp(req);
   if (!auth.loginAllowed(ip)) throw fail('Too many attempts. Wait a minute.', 429);
-  const { nonce, box } = await readBody(req, 2 << 20);
+  const { nonce, box, share } = await readBody(req, 2 << 20);
   if (typeof nonce !== 'string' || nonce.length < 16 || nonce.length > 64) throw fail('Bad envelope.');
+  if (share) return await handleShare(res, ip, nonce, box, String(share));
   if (!relayCryptoKey || relayCryptoKey.raw !== info.key.toString('base64')) relayCryptoKey = { raw:info.key.toString('base64'), key:await e2e.importKey(info.key) };
   let inner;
   try { inner = await e2e.open(relayCryptoKey.key, box, e2e.requestAad(nonce)); }

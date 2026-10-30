@@ -100,6 +100,39 @@ test('wrong password is rejected; sign-in and approval work end to end', async (
   assert.ok(Array.isArray(homeData.json.agents));
 });
 
+test('a shared link reads one chat with its own key, and nothing else', async () => {
+  const dir = path.join(home, '.claude', 'projects', '-shared');
+  fs.mkdirSync(dir, { recursive:true });
+  const id = '99999999-2222-3333-4444-555555555555';
+  fs.writeFileSync(path.join(dir, `${id}.jsonl`), [
+    { type:'ai-title', aiTitle:'Shared task' },
+    { type:'user', cwd:home, message:{ content:'fix the login' } },
+    { type:'assistant', message:{ content:[{ type:'text', text:'Fixed it.' }] } },
+  ].map(JSON.stringify).join('\n'));
+  const made = await sealed('POST', '/api/share', { kind:'local', harness:'claude', id, hours:1 });
+  assert.equal(made.status, 200);
+  const url = new URL(made.json.link);
+  const shareId = url.searchParams.get('share');
+  const raw = Uint8Array.from(Buffer.from(new URLSearchParams(url.hash.slice(1)).get('k'), 'base64url'));
+  const k = await e2e.importKey(raw);
+  // Whoever opens it: no password, no cookie, only the link.
+  const open = async (shareKey = k) => {
+    const nonce = e2e.b64(crypto.getRandomValues(new Uint8Array(18)));
+    const box = await e2e.seal(shareKey, { method:'GET', path:'/api/home', ts:Date.now() }, e2e.requestAad(nonce));
+    const res = await fetch(`${R}/api/e2e`, { method:'POST', headers:{ cookie:`agentseye_mac=${macId}`, 'content-type':'application/json', 'x-agentseye':'1' }, body:JSON.stringify({ nonce, box, share:shareId }) });
+    if (res.status !== 200) return { outer:res.status };
+    const reply = await e2e.open(shareKey, (await res.json()).box, e2e.responseAad(nonce));
+    return JSON.parse(Buffer.from(reply.body, 'base64').toString());
+  };
+  const view = await open();
+  // Asking for /api/home still only returns the shared chat.
+  assert.equal(view.title, 'Shared task');
+  assert.deepEqual(view.messages.map(m => m.text), ['fix the login', 'Fixed it.']);
+  assert.equal((await open(key)).outer, 401);
+  await sealed('POST', '/api/share/revoke', { id:shareId });
+  assert.equal((await open()).outer, 410);
+});
+
 test('large replies stream through in chunks', async () => {
   const procs = await sealed('GET', '/api/processes');
   assert.equal(procs.status, 200);

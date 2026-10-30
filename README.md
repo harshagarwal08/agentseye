@@ -53,16 +53,20 @@ One list, grouped into **Needs you**, **Working** and **Recent**, with search an
 | Codex CLI | ✓ | ✓ typed into its tab; menus from the Terminal tab | via Terminal tab | — |
 | Cursor | ✓ read only | — (Open on Mac) | — | done, waiting for approval |
 | GitHub Copilot (VS Code) | ✓ read only | — (Open on Mac) | — | done |
+| Gemini CLI | ✓ read only | — | — | — |
 
 ## Chat
-- **Composer**: quick replies (Continue, Yes, Run the tests, Commit it) and **photos** (shrunk on the phone, saved in `~/.agentseye/uploads`, passed to the agent by path).
+- **Composer**: **saved prompts** (⚡, kept on the Mac so every phone shares them; the first four show as chips), **voice** (🎙, dictation in the browser), and **photos** (shrunk on the phone, saved in `~/.agentseye/uploads`, passed to the agent by path).
 - **While an agent works** the box stays open: messages are **queued** and sent the moment it finishes, even with the phone closed. Cancel a queued one with a tap.
 - **Questions** Claude asks show as tappable options; **permission prompts** have Deny / **Always** / Allow. *Always* adds the exact command (or tool) to the project's `.claude/settings.local.json`.
-- **Changes (±)**: the project's changed files with diffs; commit, or commit and push, from the phone.
+- **Changes (±)**: the branch's **pull request** (checks, merge, comment; through your own `gh` login), the project's changed files with diffs, and commit or commit and push.
+- **Share (🔗)**: a read-only link to one chat for a teammate, for 1 hour, a day or a week. It has its own key in the link's `#fragment`, so the relay can't read it either; turn it off any time.
 - Claude sessions also have **Helpers** (subagents), **Terminal** (live screen and keys) and **Files**.
 
 ## Notifications
-Titled with the chat's name: ✅ finished (with the start of the reply), ✋ needs you (with the question), ⚠️ failed. Plus usage limits at 90%, new devices, and an optional **daily summary** in the evening.
+Titled with the chat's name: ✅ finished (with the start of the reply), ✋ needs you (with the question), ⚠️ failed, ⏳ **no new output for 20 minutes** (may be stuck). Usage: 📉 an **early warning** when a limit will run out before it resets, and an alert at 90%. Plus new devices and an optional **daily summary**.
+
+**Several Macs**: one phone can open more than one Mac (scan each Mac's QR). Switch from the Mac name on Home or in Settings; each Mac keeps its own password. Notifications come from one Mac at a time: the one where you last turned them on.
 
 Prompts go to the phone **when you're away from the Mac** (no keyboard or mouse for 2 minutes) or always — Settings → Approvals.
 

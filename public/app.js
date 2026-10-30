@@ -38,19 +38,32 @@ async function detectRelay() {
   } catch { relay.info = JSON.parse(localStorage.getItem('relay-info') || '{"relay":false}'); }
   relay.on = Boolean(relay.info.relay);
 }
+// Each Mac has its own password, so its key is kept under its id; one phone can switch between several Macs.
+const keyName = () => `relay-key:${relay.info.macId || ''}`;
 async function relayKey() {
   if (relay.key) return relay.key;
-  const raw = localStorage.getItem('relay-key');
+  // Keys saved before multi-Mac support belong to the Mac this phone was using then.
+  if (!localStorage.getItem(keyName()) && localStorage.getItem('relay-key')) { localStorage.setItem(keyName(), localStorage.getItem('relay-key')); localStorage.removeItem('relay-key'); }
+  const raw = localStorage.getItem(keyName());
   if (!raw) return null;
   relay.key = await e2e.importKey(e2e.unb64(raw));
   return relay.key;
 }
 async function unlock(password) {
   const raw = await e2e.deriveKeyBytes(password, relay.info.salt, relay.info.iterations);
-  localStorage.setItem('relay-key', e2e.b64(raw));
+  localStorage.setItem(keyName(), e2e.b64(raw));
   relay.key = await e2e.importKey(raw);
 }
-const forgetKey = () => { localStorage.removeItem('relay-key'); relay.key = null; };
+const forgetKey = () => { localStorage.removeItem(keyName()); relay.key = null; };
+// The Macs this phone has opened, newest first, with the name each one reports.
+const macs = () => JSON.parse(localStorage.getItem('macs') || '[]');
+function rememberMac(name) {
+  if (!relay.on || !relay.info.macId) return;
+  const list = macs().filter(m => m.id !== relay.info.macId);
+  list.unshift({ id:relay.info.macId, name:name || 'Mac', seen:Date.now() });
+  localStorage.setItem('macs', JSON.stringify(list.slice(0, 8)));
+}
+const switchMac = id => { relay.key = null; location.href = `/m/${id}`; };
 
 // One request, plain or sealed. Returns { status, data } with data parsed JSON (or a Blob for files).
 async function transport(path, body, signal) {
@@ -215,7 +228,7 @@ async function gate() {
     return;
   }
   connection(true);
-  if (state.authed && state.approved) return start(state);
+  if (state.authed && state.approved) { loadPrompts(); return start(state); }
   $('#app').hidden = true;
   g.hidden = false;
   if (state.authed && !state.approved) {
@@ -654,8 +667,9 @@ async function homeView() {
   };
   const render = async () => {
     const d = data = await api('/api/home');
+    rememberMac(d.host);
     const html = `
-      <div class="top"><h1>Agents</h1><span class="mac"><span class="dot green"></span>${esc(d.host)}</span></div>
+      <div class="top"><h1>Agents</h1>${macs().length > 1 ? `<button class="mac mac-switch" id="mac-switch"><span class="dot green"></span>${esc(d.host)} ▾</button>` : `<span class="mac"><span class="dot green"></span>${esc(d.host)}</span>`}</div>
       ${isPhone && !standalone() && !localStorage.getItem('install-hidden') ? '<div class="banner install"><img src="/icon.svg" alt="" width="40" height="40"><div class="grow"><b>Get the app</b><div class="small muted">Add to your Home Screen for full screen and notifications.</div></div><button class="small primary" id="install">Add</button><button class="ghost small" id="install-x" aria-label="Dismiss">✕</button></div>' : ''}
       ${guideCard()}
       ${d.devicesWaiting.map(dev => `<div class="banner"><div class="grow"><b>${esc(dev.name)}</b> wants to sign in<div class="small muted">${ago(dev.createdAt)}${me.local ? '' : ' · approve it on the Mac'}</div></div>${me.local ? `<button class="good small" data-approve="${dev.id}">Approve</button><button class="ghost small" data-reject="${dev.id}">✕</button>` : ''}</div>`).join('')}
@@ -668,6 +682,7 @@ async function homeView() {
     head.innerHTML = html;
     bindApprovals(head, render);
     $('#install')?.addEventListener('click', installSheet);
+    $('#mac-switch')?.addEventListener('click', macsSheet);
     $('#install-x')?.addEventListener('click', () => { localStorage.setItem('install-hidden', '1'); shownA = ''; render(); });
     head.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/approve', { id:b.dataset.approve }); render(); }, 'Device approved'));
     head.querySelectorAll('[data-reject]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/devices/remove', { id:b.dataset.reject }); render(); }));
@@ -719,13 +734,32 @@ async function newChatSheet(d) {
 // ---------- Composer ----------
 // One chat box for every agent: quick replies, a photo button, and while the agent works, messages queue up
 // and go out on their own when it finishes.
-const QUICK = ['Continue', 'Yes, go ahead', 'Run the tests', 'Commit it'];
+// Saved prompts live on the Mac, so every phone sees the same list; the first few show as chips.
+let prompts = ['Continue', 'Yes, go ahead', 'Run the tests and fix any failures', 'Commit and push it'];
+const loadPrompts = () => api('/api/prompts').then(list => { prompts = list; }).catch(() => {});
+const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+const short = t => (t.length > 28 ? `${t.slice(0, 27)}…` : t);
 function composer({ placeholder, disabled = false, quick = true }) {
-  return `${disabled || !quick ? '' : `<div class="quick">${QUICK.map(q => `<button type="button" data-quick="${esc(q)}">${esc(q)}</button>`).join('')}</div>`}
+  return `${disabled || !quick ? '' : `<div class="quick"><button type="button" class="prompts-btn" data-prompts aria-label="Saved prompts">⚡</button>${prompts.slice(0, 4).map(q => `<button type="button" data-quick="${esc(q)}">${esc(short(q))}</button>`).join('')}</div>`}
     <div class="attached" id="attached" hidden></div>
     <form class="composer" id="reply-form"><button type="button" class="clip" id="attach" aria-label="Attach a photo" ${disabled ? 'disabled' : ''}>＋</button><input type="file" id="attach-file" accept="image/*" multiple hidden>
       <textarea id="reply" rows="1" placeholder="${esc(placeholder)}" ${disabled ? 'disabled' : ''}></textarea>
+      ${Speech && !disabled ? '<button type="button" class="clip mic" id="mic" aria-label="Speak your message">🎙</button>' : ''}
       <div class="bar"><button class="send" aria-label="Send" ${disabled ? 'disabled' : ''}>↑</button></div></form>`;
+}
+// The saved prompts: tap one to send it, or add and remove them.
+function promptsSheet(onPick) {
+  const draw = card => {
+    card.innerHTML = `<h3>Saved prompts</h3>
+      <div class="list">${prompts.map((p, i) => `<div class="prompt-row"><button class="grow" data-pick="${i}">${esc(p)}</button><button class="ghost small" data-del="${i}" aria-label="Remove">✕</button></div>`).join('') || '<div class="small muted">No saved prompts yet.</div>'}</div>
+      <form id="add-prompt" class="row2"><input id="new-prompt" placeholder="Add a prompt you use often" autocomplete="off"><button class="primary">Add</button></form>
+      <button class="ghost" data-close>Done</button>`;
+    card.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { closeSheet(); onPick(prompts[Number(b.dataset.pick)]); });
+    const save = list => attempt(async () => { prompts = await api('/api/prompts', { prompts:list }); draw(card); });
+    card.querySelectorAll('[data-del]').forEach(b => b.onclick = () => save(prompts.filter((_, i) => i !== Number(b.dataset.del))));
+    card.querySelector('#add-prompt').onsubmit = e => { e.preventDefault(); const v = card.querySelector('#new-prompt').value.trim(); if (v) save([...prompts, v]); };
+  };
+  sheet('', draw);
 }
 // Photos are shrunk on the phone (the relay caps message size), saved on the Mac, and handed to the agent by path,
 // which Claude Code and Codex can open.
@@ -767,6 +801,24 @@ function bindComposer(root, { keep = '', onSend, before }) {
     paint();
   }));
   root.querySelectorAll('[data-quick]').forEach(b => b.onclick = () => { ta.value = b.dataset.quick; root.querySelector('#reply-form').requestSubmit(); });
+  root.querySelector('[data-prompts]')?.addEventListener('click', () => promptsSheet(p => { ta.value = p; root.querySelector('#reply-form').requestSubmit(); }));
+  // Hold-free dictation: tap the mic, speak, tap again (or pause) to stop. The words land in the box to check first.
+  const mic = root.querySelector('#mic');
+  if (mic) {
+    let rec = null;
+    mic.onclick = () => {
+      if (rec) { rec.stop(); return; }
+      rec = new Speech();
+      rec.lang = navigator.language || 'en-US';
+      rec.interimResults = true;
+      const before = ta.value ? `${ta.value.trim()} ` : '';
+      rec.onresult = e => { ta.value = before + [...e.results].map(r => r[0].transcript).join(''); grow(ta); };
+      rec.onerror = e => { if (e.error !== 'aborted' && e.error !== 'no-speech') toast(e.error === 'not-allowed' ? 'Allow microphone access to speak messages.' : 'Couldn\'t hear that. Try again.', true); };
+      rec.onend = () => { rec = null; mic.classList.remove('on'); };
+      mic.classList.add('on');
+      rec.start();
+    };
+  }
   root.querySelector('#reply-form').onsubmit = async e => {
     e.preventDefault();
     let text = ta.value.trim();
@@ -785,6 +837,78 @@ const userText = text => esc(String(text || '').replace(/\[Photo from my phone: 
 const queuedHtml = list => (list || []).map(q => `<div class="msg user pending queued">${userText(q.text)}<div class="when">⏳ Sends when the agent finishes · <button class="linkish" data-unqueue="${q.id}">Cancel</button></div></div>`).join('');
 const bindQueued = (pane, after) => pane.querySelectorAll('[data-unqueue]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/queue/remove', { id:b.dataset.unqueue }); after(); }, 'Cancelled'));
 
+// ---------- Macs ----------
+// One phone, several Macs: each keeps its own password and key; switching just opens the other Mac's address.
+const macsHtml = () => `${macs().map(m => `<div class="item"><div class="grow"><b>${esc(m.name)}</b> ${m.id === relay.info.macId ? '<span class="chip green">Open now</span>' : ''}<div class="s">Last opened ${ago(m.seen)}</div></div>
+  ${m.id !== relay.info.macId ? `<button class="small" data-mac="${m.id}">Switch</button><button class="ghost small" data-forget-mac="${m.id}" aria-label="Forget">✕</button>` : ''}</div>`).join('')}
+  <div class="item"><div class="grow small muted">To add a Mac: install AgentsEye on it, open its Settings, and scan its QR code with this phone. Each Mac keeps its own password.</div></div>`;
+function bindMacs(root, after) {
+  root.querySelectorAll('[data-mac]').forEach(b => b.onclick = () => switchMac(b.dataset.mac));
+  root.querySelectorAll('[data-forget-mac]').forEach(b => b.onclick = () => { localStorage.setItem('macs', JSON.stringify(macs().filter(m => m.id !== b.dataset.forgetMac))); localStorage.removeItem(`relay-key:${b.dataset.forgetMac}`); after(); });
+}
+function macsSheet() {
+  const draw = card => { card.innerHTML = `<h3>Your Macs</h3><div class="group">${macsHtml()}</div><button class="ghost" data-close>Done</button>`; bindMacs(card, () => draw(card)); };
+  sheet('', draw);
+}
+
+// ---------- Sharing ----------
+// A read-only link to one chat for someone else. It is encrypted with its own key and stops working when it
+// expires or you turn it off.
+function shareSheet(ref) {
+  let hours = 24;
+  let made = null;
+  const draw = async card => {
+    const active = (await api('/api/shares').catch(() => [])).filter(x => x.kind === ref.kind && x.agentId === ref.id);
+    card.innerHTML = `<h3>Share this chat</h3>
+      <p class="small muted">Anyone with the link can read this chat, not reply, until it expires. It's encrypted: the relay can't read it.</p>
+      ${made ? `<div class="share-link"><input readonly value="${esc(made.link)}"><div class="row2"><button id="copy-link">Copy</button>${navigator.share ? '<button class="primary" id="send-link">Share…</button>' : ''}</div></div>`
+        : `<div class="seg" id="hours">${[[1, '1 hour'], [24, '1 day'], [168, '1 week']].map(([h, l]) => `<button data-h="${h}" class="${h === hours ? 'on' : ''}">${l}</button>`).join('')}</div><button class="primary" id="make">Create link</button>`}
+      ${active.length ? `<div class="section"><h2>Active links</h2></div><div class="list">${active.map(x => `<div class="prompt-row"><div class="grow small">Expires ${clock(x.expiresAt)}</div><button class="ghost small" data-off="${x.id}">Turn off</button></div>`).join('')}</div>` : ''}
+      <button class="ghost" data-close>Done</button>`;
+    card.querySelectorAll('[data-h]').forEach(b => b.onclick = () => { hours = Number(b.dataset.h); draw(card); });
+    card.querySelector('#make')?.addEventListener('click', () => attempt(async () => { made = await api('/api/share', { kind:ref.kind, harness:ref.harness, id:ref.id, title:ref.title, hours }); draw(card); }));
+    card.querySelector('#copy-link')?.addEventListener('click', () => navigator.clipboard.writeText(made.link).then(() => toast('Link copied')));
+    card.querySelector('#send-link')?.addEventListener('click', () => navigator.share({ title:ref.title, url:made.link }).catch(() => {}));
+    card.querySelectorAll('[data-off]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/share/revoke', { id:b.dataset.off }); if (made?.id === b.dataset.off) made = null; draw(card); }, 'Link turned off'));
+  };
+  sheet('', draw);
+}
+
+// What someone sees when they open a shared link: the chat, read only, refreshing on its own.
+async function sharedView(id, rawKey) {
+  $('#app').hidden = true;
+  const g = $('#gate');
+  g.hidden = false;
+  g.className = 'gate shared';
+  const key = await e2e.importKey(rawKey);
+  let last = '';
+  const draw = async () => {
+    const nonce = e2e.b64(crypto.getRandomValues(new Uint8Array(18)));
+    const box = await e2e.seal(key, { method:'GET', path:'/api/share/view', ts:Date.now() }, e2e.requestAad(nonce));
+    const res = await fetch('/api/e2e', { method:'POST', headers:{ 'content-type':'application/json', 'x-agentseye':'1' }, body:JSON.stringify({ nonce, box, share:id }) });
+    const outer = await res.json().catch(() => null);
+    if (!res.ok) {
+      g.innerHTML = `<div class="box"><img src="/icon.svg" alt=""><h1>${res.status === 410 ? 'This link has ended' : res.status >= 500 ? 'Can\'t reach that Mac' : 'This link doesn\'t work'}</h1><p class="muted">${esc(outer?.error || (res.status >= 500 ? 'It may be asleep. This page keeps trying.' : 'Ask for a new link.'))}</p></div>`;
+      return res.status >= 500;
+    }
+    const reply = await e2e.open(key, outer.box, e2e.responseAad(nonce));
+    const v = JSON.parse(new TextDecoder().decode(e2e.unb64(reply.body)));
+    const html = `<div class="shared-head"><div class="avatar">${avatar(v.harness, v.status === 'busy' ? 'busy' : 'open')}</div><div class="grow"><h1>${esc(v.title)}</h1><div class="small muted">Shared read-only · ${v.status === 'busy' ? 'working now · ' : ''}link ends ${clock(v.expiresAt)}</div></div></div>
+      <div class="shared-pane">${v.messages.map(m => `<div class="msg ${m.role}">${m.role === 'assistant' ? markdown(m.text) : userText(m.text)}<div class="when">${ago(m.time)}</div></div>`).join('') || '<div class="empty">No messages yet.</div>'}</div>
+      <div class="shared-foot small muted">Shared from <b>AgentsEye</b> · updates on its own</div>`;
+    if (html !== last) { const atEnd = window.innerHeight + window.scrollY >= document.body.scrollHeight - 160; g.innerHTML = html; if (!last || atEnd) window.scrollTo(0, document.body.scrollHeight); last = html; }
+    return true;
+  };
+  const loop = async () => { let again = true; try { again = await draw(); } catch { again = true; } if (again) setTimeout(loop, 6000); };
+  loop();
+}
+const shareFromUrl = () => {
+  const id = new URLSearchParams(location.search).get('share');
+  const k = new URLSearchParams(location.hash.slice(1)).get('k');
+  if (!id || !k) return null;
+  try { return { id, key:Uint8Array.from(atob(k.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)) }; } catch { return null; }
+};
+
 // ---------- Changes ----------
 // What the agent changed in its project: files, diffs, and committing or pushing it.
 async function changesView(kind, harness, id) {
@@ -797,12 +921,29 @@ async function changesView(kind, harness, id) {
   const pane = $('#pane');
   const foot = $('#foot');
   const diffHtml = text => text.split('\n').filter(l => !/^(diff --git|index |--- |\+\+\+ |new file mode|deleted file mode)/.test(l)).map(l => `<div class="dl ${l.startsWith('@@') ? 'hunk' : l[0] === '+' ? 'add' : l[0] === '-' ? 'del' : ''}">${esc(l) || ' '}</div>`).join('');
+  // The branch's pull request, if it has one: checks at a glance, merge and comment.
+  const prCard = ({ pr:p, available, reason }) => {
+    if (!available) return `<div class="pr-card small muted">${esc(reason)}</div>`;
+    if (!p) return '';
+    const st = p.state === 'MERGED' ? ['Merged', 'blue'] : p.state === 'CLOSED' ? ['Closed', 'red'] : p.draft ? ['Draft', ''] : ['Open', 'green'];
+    const sum = p.summary;
+    const canMerge = p.state === 'OPEN' && !p.draft && p.mergeable !== 'CONFLICTING';
+    return `<div class="pr-card"><div class="pr-head"><b>#${p.number} ${esc(p.title)}</b><span class="chip ${st[1]}">${st[0]}</span></div>
+      <div class="small muted">${esc(p.head)} → ${esc(p.base)} · <b class="plus">+${p.additions}</b> <b class="minus">−${p.deletions}</b>${p.comments ? ` · ${p.comments} comment${p.comments > 1 ? 's' : ''}` : ''}${p.review === 'APPROVED' ? ' · ✓ approved' : p.review === 'CHANGES_REQUESTED' ? ' · changes requested' : ''}${p.mergeable === 'CONFLICTING' ? ' · <span style="color:var(--red)">has conflicts</span>' : ''}</div>
+      ${p.checks.length ? `<div class="checks-sum">${sum.fail ? `<span class="pace bad">✕ ${sum.fail} failing</span>` : ''}${sum.pending ? `<span class="pace warn">⏳ ${sum.pending} running</span>` : ''}${sum.pass ? `<span class="pace ok">✓ ${sum.pass} passed</span>` : ''}</div>
+        ${sum.fail ? `<div class="small">${p.checks.filter(c => c.state === 'fail').slice(0, 5).map(c => `<div>✕ ${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name)}</a>` : esc(c.name)}</div>`).join('')}</div>` : ''}` : '<div class="small muted">No checks on this pull request.</div>'}
+      <div class="row2"><a href="${esc(p.url)}" target="_blank" rel="noopener" class="btn-link"><button type="button">Open on GitHub</button></a>${canMerge ? '<button class="primary" id="pr-merge">Merge</button>' : ''}</div>
+      ${p.state === 'OPEN' ? '<form id="pr-comment" class="row2"><input id="pr-text" placeholder="Comment on the pull request" autocomplete="off"><button>Comment</button></form>' : ''}</div>`;
+  };
   const draw = async () => {
-    const s = await api(`/api/git?${q}`);
+    const [s, pr] = await Promise.all([api(`/api/git?${q}`), api(`/api/git/pr?${q}`).catch(() => ({ available:true, pr:null }))]);
     if (!s.repo) { pane.innerHTML = '<div class="empty">This project isn\'t a git repository.</div>'; foot.innerHTML = ''; return; }
     $('#g-sub').textContent = [s.branch, s.ahead ? `${s.ahead} to push` : '', s.behind ? `${s.behind} behind` : ''].filter(Boolean).join(' · ');
-    pane.innerHTML = s.files.length ? `<div class="gfiles">${s.files.map(f => `<div class="gfile"><button class="ghead" data-f="${esc(f.path)}"><span class="gs ${f.status}">${{ new:'N', added:'A', deleted:'D', renamed:'R', modified:'M' }[f.status]}</span><span class="grow mono small">${esc(f.path)}</span><span class="small nowrap"><b class="plus">+${f.add}</b> <b class="minus">−${f.del}</b></span></button><div class="gdiff" hidden></div></div>`).join('')}</div>`
-      : `<div class="empty">No uncommitted changes.${s.ahead ? ` ${s.ahead} commit${s.ahead > 1 ? 's' : ''} not pushed yet.` : ''}</div>`;
+    pane.innerHTML = prCard(pr) + (s.files.length ? `<div class="gfiles">${s.files.map(f => `<div class="gfile"><button class="ghead" data-f="${esc(f.path)}"><span class="gs ${f.status}">${{ new:'N', added:'A', deleted:'D', renamed:'R', modified:'M' }[f.status]}</span><span class="grow mono small">${esc(f.path)}</span><span class="small nowrap"><b class="plus">+${f.add}</b> <b class="minus">−${f.del}</b></span></button><div class="gdiff" hidden></div></div>`).join('')}</div>`
+      : `<div class="empty">No uncommitted changes.${s.ahead ? ` ${s.ahead} commit${s.ahead > 1 ? 's' : ''} not pushed yet.` : ''}</div>`);
+    const p = pr.pr;
+    $('#pr-merge')?.addEventListener('click', async () => { if (await confirmSheet(`Merge #${p.number}?`, `Squash-merges "${p.title}" into ${p.base} on GitHub.${p.summary.fail ? ` ${p.summary.fail} check${p.summary.fail > 1 ? 's are' : ' is'} failing.` : p.summary.pending ? ' Some checks are still running.' : ''}`, 'Merge', Boolean(p.summary.fail))) attempt(async () => { await api('/api/git/pr/merge', { kind, harness, id, number:p.number }, { timeout:120000 }); await draw(); }, 'Merged'); });
+    $('#pr-comment')?.addEventListener('submit', e => { e.preventDefault(); const text = $('#pr-text').value.trim(); if (text) attempt(async () => { await api('/api/git/pr/comment', { kind, harness, id, number:p.number, text }); await draw(); }, 'Comment posted'); });
     pane.querySelectorAll('[data-f]').forEach(b => b.onclick = async () => {
       const box = b.nextElementSibling;
       if (!box.hidden) { box.hidden = true; return; }
@@ -836,10 +977,11 @@ async function changesView(kind, harness, id) {
 // when it asks a question, its options show as buttons. Cursor and VS Code chats use the same screen, read only.
 async function t3View(id, app = '') {
   const view = $('#view');
-  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar"></div><div class="grow title-btn"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></div><button class="icon-btn" id="changes" aria-label="Changes" hidden>±</button><span id="s-chip"></span></div></header>
+  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar"></div><div class="grow title-btn"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></div><button class="icon-btn" id="share" aria-label="Share a read-only link" ${relay.on ? '' : 'hidden'}>🔗</button><button class="icon-btn" id="changes" aria-label="Changes" hidden>±</button><span id="s-chip"></span></div></header>
     <div class="pane" id="pane"></div><div class="foot" id="foot"></div></div>`;
   $('#back').onclick = () => { location.hash = '#/'; };
   $('#changes').onclick = () => { location.hash = app ? `#/g/ide/${app}/${encodeURIComponent(id)}` : `#/g/t3/-/${encodeURIComponent(id)}`; };
+  $('#share').onclick = () => shareSheet({ kind:app ? 'ide' : 't3', harness:app || '', id, title:info?.session?.title || '' });
   const pane = $('#pane');
   const foot = $('#foot');
   let info = null;
@@ -1010,11 +1152,12 @@ async function sessionView(harness, id) {
   let tab = 'chat';
   let info = null;
   const view = $('#view');
-  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar">${avatar(harness, 'open')}</div><button class="grow title-btn" id="s-name" aria-label="Rename"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></button><button class="icon-btn" id="changes" aria-label="Changes">±</button><button class="chip-btn" id="s-chip" aria-label="Session actions"></button></div>
+  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar">${avatar(harness, 'open')}</div><button class="grow title-btn" id="s-name" aria-label="Rename"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></button>${relay.on ? '<button class="icon-btn" id="share" aria-label="Share a read-only link">🔗</button>' : ''}<button class="icon-btn" id="changes" aria-label="Changes">±</button><button class="chip-btn" id="s-chip" aria-label="Session actions"></button></div>
     <div class="seg" id="s-tabs"><button data-t="chat" class="on">Chat</button>${harness === 'claude' ? '<button data-t="helpers">Helpers</button>' : ''}<button data-t="terminal">Terminal</button><button data-t="files">Files</button></div></header>
     <div class="pane" id="pane"></div><div class="foot" id="foot"></div></div>`;
   $('#back').onclick = () => { location.hash = '#/'; };
   $('#changes').onclick = () => { location.hash = `#/g/local/${harness}/${encodeURIComponent(id)}`; };
+  $('#share')?.addEventListener('click', () => shareSheet({ kind:'local', harness, id, title:info?.session?.name || info?.session?.title || '' }));
   $('#s-chip').onclick = () => {
     const s = info?.session;
     if (!s) return;
@@ -1208,6 +1351,7 @@ async function settingsView() {
         ${!me.local ? `<div class="item"><div class="grow small muted">Connected through ${esc(location.host)}</div></div>` : ''}
         ${t.error && t.status !== 'missing' ? `<div class="item small" style="color:var(--red)">${esc(t.error)}</div>` : ''}
       </div>
+      ${relay.on ? `<div class="section"><h2>Your Macs</h2></div><div class="group" id="macs">${macsHtml()}</div>` : ''}
       <div class="section"><h2>When you're away</h2></div>
       <div class="group">
         <div class="item"><div class="grow"><b>Keep your Mac awake</b><div class="s">Agents stop when the Mac sleeps. The screen can still turn off and lock.${s.power.keepAwake === 'plugged' && !s.power.onPower ? ' <b>On battery now, so not active.</b>' : ''}</div></div></div>
@@ -1217,7 +1361,7 @@ async function settingsView() {
         <div class="item"><div class="grow"><b>Lock the screen</b><div class="s">${s.power.lockImmediate ? 'Locks right away. Agents keep running; nobody can use the Mac without your password.' : 'Turn on "Require password immediately" in System Settings → Lock Screen first.'}</div></div><button class="small" id="lock-now" ${s.power.lockImmediate ? '' : 'disabled'}>Lock now</button></div>
       </div>
       <div class="section"><h2>Notifications</h2></div>
-      <div class="group"><div class="item"><div class="grow"><b>Notify this device</b><div class="s">When an agent needs your OK or finishes, and when a new device asks to sign in.</div></div>
+      <div class="group"><div class="item"><div class="grow"><b>Notify this device</b><div class="s">When an agent needs you, finishes, looks stuck, or a limit will run out early.${macs().length > 1 ? ' One Mac at a time: turning it on here moves notifications to this Mac.' : ''}</div></div>
         ${'PushManager' in window && window.isSecureContext && location.protocol === 'https:' ? `<label class="switch"><input type="checkbox" id="push" ${pushOn ? 'checked' : ''}><i></i></label>` : `<span class="small muted" style="max-width:40%;text-align:right">${/iPhone|iPad/.test(navigator.userAgent) && !navigator.standalone ? 'Add to Home Screen first' : 'Needs the https phone link'}</span>`}</div>
         ${pushOn ? '<div class="item"><button class="small" id="test-push">Send a test notification</button></div>' : ''}
         <div class="item"><div class="grow"><b>Daily summary</b><div class="s">One notification in the evening: what your agents did today and what still needs you.</div></div><label class="switch"><input type="checkbox" id="summary" ${s.summary.on ? 'checked' : ''}><i></i></label></div>
@@ -1249,6 +1393,7 @@ async function settingsView() {
       shown = ''; render();
     }, e.target.checked ? 'Will keep running with the lid closed' : 'Normal sleep restored'));
     $('#lock-now')?.addEventListener('click', lockMac);
+    if ($('#macs')) bindMacs($('#macs'), () => { shown = ''; render(); });
     view.querySelectorAll('[data-when]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/approvals/settings', { when:b.dataset.when }); shown = ''; render(); }, 'Saved'));
     $('#summary')?.addEventListener('change', e => attempt(async () => { await api('/api/summary/settings', { on:e.target.checked }); shown = ''; render(); }, 'Saved'));
     $('#summary-time')?.addEventListener('change', e => attempt(async () => { await api('/api/summary/settings', { time:e.target.value }); }, 'Saved'));
@@ -1270,18 +1415,27 @@ async function settingsView() {
 }
 
 // ---------- Push ----------
+// A phone can receive notifications from one Mac at a time (each Mac signs them with its own key), so "on" means
+// subscribed with this Mac's key; turning it on here moves notifications over from another Mac.
+const pushKey = async () => { const { key } = await api('/api/push/key'); return Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - key.length % 4) % 4)), c => c.charCodeAt(0)); };
 async function pushState() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !window.isSecureContext) return false;
   const reg = await navigator.serviceWorker.getRegistration();
-  return Boolean(await reg?.pushManager.getSubscription());
+  const sub = await reg?.pushManager.getSubscription();
+  if (!sub) return false;
+  const mine = sub.options?.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+  if (!mine) return true;
+  const theirs = await pushKey().catch(() => null);
+  return !theirs || (mine.length === theirs.length && mine.every((b, i) => b === theirs[i]));
 }
 async function enablePush() {
   if (await Notification.requestPermission() !== 'granted') throw new Error('Notifications are blocked for this site.');
   const reg = await navigator.serviceWorker.register('/sw.js');
   await navigator.serviceWorker.ready;
-  const { key } = await api('/api/push/key');
-  const raw = Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - key.length % 4) % 4)), c => c.charCodeAt(0));
-  const sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:raw });
+  const raw = await pushKey();
+  let sub;
+  try { sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:raw }); }
+  catch { await (await reg.pushManager.getSubscription())?.unsubscribe(); sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:raw }); }
   await api('/api/push/subscribe', { subscription:sub.toJSON() });
 }
 async function disablePush() {
@@ -1291,4 +1445,7 @@ async function disablePush() {
   await api('/api/push/unsubscribe', {});
 }
 
-detectRelay().then(gate);
+// A shared link opens just that chat, read only, without signing in.
+const shared = shareFromUrl();
+if (shared) sharedView(shared.id, shared.key);
+else detectRelay().then(gate);

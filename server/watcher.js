@@ -1,9 +1,9 @@
-import { claudeLive, findSession, transcript, folderName } from './agents.js';
+import { claudeLive, findSession, transcript, folderName, sessions } from './agents.js';
 import { nameOf } from './names.js';
 import * as approvals from './approvals.js';
 import * as auth from './auth.js';
 import * as push from './push.js';
-import { usage } from './usage.js';
+import { usage, runsOutAt } from './usage.js';
 import * as t3 from './t3.js';
 import * as ides from './ides.js';
 
@@ -61,13 +61,38 @@ export function start() {
     }
   }, 15000).unref();
 
+  // An agent "working" with no new output for 20 minutes is often stuck in a loop or waiting on something hidden.
+  const STUCK_AFTER = 20 * 60000;
+  const stuckSeen = new Map();
+  setInterval(async () => {
+    const busy = [
+      ...t3.threads().filter(t => t.status === 'busy').map(t => ({ key:`t3:${t.id}`, title:t.title, project:t.project, at:t.updatedAt, url:`/#/t/${t.id}` })),
+      ...(await sessions({ limit:30 }).catch(() => [])).filter(s => s.harness === 'claude' && s.live && s.status === 'busy' && s.entrypoint !== 'sdk-ts')
+        .map(s => ({ key:`claude:${s.id}`, title:s.name || s.title, project:folderName(s.cwd), at:s.updatedAt, url:`/#/s/claude/${s.id}` })),
+    ];
+    const now = new Set(busy.map(b => b.key));
+    for (const k of stuckSeen.keys()) if (!now.has(k)) stuckSeen.delete(k);
+    for (const b of busy) {
+      if (Date.now() - b.at < STUCK_AFTER || stuckSeen.get(b.key) === b.at) continue;
+      stuckSeen.set(b.key, b.at);
+      push.notify({ title:`⏳ ${b.title}`, body:`${b.project ? `${b.project} · ` : ''}No new output for ${Math.round((Date.now() - b.at) / 60000)} minutes. It may be stuck.`, url:b.url, tag:`stuck-${b.key}` });
+    }
+  }, 60000).unref();
+
   // One heads-up per limit window when it passes 90%, so you can pace work before you hit the wall.
   const warned = new Set();
   const names = { claude:'Claude Code', codex:'Codex' };
+  const day = t => new Date(t).toLocaleString([], { weekday:'short', hour:'numeric', minute:'2-digit' });
   setInterval(async () => {
     for (const u of await usage().catch(() => [])) {
       for (const w of u.windows || []) {
         const key = `${u.harness}:${w.key}:${w.resetsAt}`;
+        // An early warning: at this rate the limit runs out before it resets (and within two days).
+        const hitAt = runsOutAt(w);
+        if (hitAt && hitAt - Date.now() < 48 * 3600000 && w.percent >= 20 && w.percent < 90 && !warned.has(`pace:${key}`)) {
+          warned.add(`pace:${key}`);
+          push.notify({ title:`📉 ${names[u.harness]} ${w.label.toLowerCase()} limit runs out ~${day(hitAt)}`, body:`At this rate. ${w.percent}% used, resets ${day(w.resetsAt)}.`, url:'/#/', tag:`pace-${key}` });
+        }
         if (w.percent >= 90 && !warned.has(key)) {
           warned.add(key);
           push.notify({ title:`${names[u.harness]}: ${w.label.toLowerCase()} limit at ${w.percent}%`, body:w.resetsAt ? `Resets ${new Date(w.resetsAt).toLocaleString([], { weekday:'short', hour:'numeric', minute:'2-digit' })}.` : '', url:'/#/', tag:`limit-${key}` });

@@ -103,6 +103,16 @@ async function codex() {
   return { harness:'codex', state:'unknown', note:'No usage reported yet. It appears after your next Codex request.' };
 }
 
+// When a limit runs out at the current rate, if that is before it resets. Same rule as the phone's pace line.
+export function runsOutAt(w, now = Date.now()) {
+  if (!w.minutes || !w.resetsAt || w.percent < 5 || w.percent >= 100) return null;
+  const span = w.minutes * 60000;
+  const elapsed = Math.min(1, Math.max(0, 1 - (w.resetsAt - now) / span));
+  if (elapsed < 0.03) return null;
+  const hitAt = now + (100 - w.percent) / (w.percent / (elapsed * span));
+  return hitAt < w.resetsAt ? hitAt : null;
+}
+
 // A week of readings, at most one every 10 minutes per limit, for the history chart on the phone.
 const historyFile = path.join(DATA, 'usage-history.json');
 let history = null;

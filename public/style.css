@@ -416,3 +416,28 @@ button.primary.busy::after, button.good.busy::after, .send.busy::after { border-
 .spark .area { fill:var(--accent); opacity:.12; }
 .spark .limit { stroke:var(--red); stroke-dasharray:3 3; stroke-width:1; vector-effect:non-scaling-stroke; opacity:.6; }
 .spark-axis { display:flex; justify-content:space-between; margin-top:-2px; }
+/* Prompts, voice, sharing, pull requests, Macs */
+.quick .prompts-btn { background:var(--card-2); box-shadow:none; padding:3px 10px; }
+.foot .composer .mic.on { background:var(--red); color:#fff; animation:pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity:.6; } }
+.prompt-row { display:flex; gap:8px; align-items:center; }
+.prompt-row .grow { flex:1; text-align:left; min-width:0; }
+.row2 { display:grid; grid-template-columns:1fr auto; gap:8px; }
+.share-link { display:grid; gap:8px; }
+.share-link input { font-size:13px; }
+.share-link .row2 { grid-template-columns:1fr 1fr; }
+.pr-card { background:var(--card); border-radius:16px; padding:14px; display:grid; gap:8px; margin-bottom:12px; }
+.pr-head { display:flex; gap:8px; align-items:flex-start; justify-content:space-between; }
+.pr-head b { min-width:0; }
+.checks-sum { display:flex; gap:12px; flex-wrap:wrap; font-size:14px; }
+.pr-card .row2 { grid-template-columns:1fr 1fr; }
+.pr-card form.row2 { grid-template-columns:1fr auto; }
+.btn-link button { width:100%; }
+.mac-switch { background:none; padding:0; min-height:0; font:inherit; color:inherit; }
+.gate.shared { display:block; padding:0 0 40px; overflow:visible; }
+.shared-head { position:sticky; top:0; z-index:2; display:flex; gap:12px; align-items:center; padding:calc(12px + var(--safe-t)) 16px 12px; background:var(--bg); border-bottom:1px solid var(--line); }
+.shared-head h1 { font-size:18px; margin:0; }
+.shared-pane { display:grid; gap:10px; padding:14px; max-width:760px; margin:0 auto; }
+.shared-foot { text-align:center; padding:16px; }
+.msg th, .msg td { min-width:6.5em; }
+.msg table code { white-space:nowrap; }
