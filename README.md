@@ -125,6 +125,10 @@ AgentsEye runs as your macOS user and uses your existing agent accounts. It can 
 
 You can also [host your own relay](relay/README.md).
 
+## Notification behavior
+
+Claude usage and token-limit alerts are disabled; usage remains visible in the app. Agent approvals, questions, completion alerts and the optional daily summary remain available. Identical notifications are suppressed for one minute, including across Mac app restarts. Replacement notifications update quietly instead of buzzing again.
+
 ## Troubleshooting
 
 | Problem | What to check |

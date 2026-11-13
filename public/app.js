@@ -432,7 +432,7 @@ function guideSteps(st) {
       why:'AgentsEye then opens full screen like an app. On iPhone this is also required for notifications.',
       action:isPhone && !standalone() ? '<button class="small primary" data-install>Show me how</button>' : '<span class="small muted">Do this on your phone</span>' },
     { id:'notify', done:st.notifications, title:'Turn on notifications',
-      why:'Get a ping when an agent needs your OK, finishes, or a usage limit runs low.',
+      why:'Get a ping when an agent needs your OK or finishes.',
       action:canPush() ? '<button class="small primary" data-push>Turn on</button>' : `<span class="small muted">${isIOS && !standalone() ? 'Open AgentsEye from your Home Screen first' : 'Do this on your phone'}</span>` },
     { id:'approvals', done:st.approvals, title:"Answer Claude's prompts and questions",
       why:'When Claude asks before running a command, or asks you to pick an option, it comes to your phone (Terminal and VS Code). At your desk Claude still asks in its own window.',
@@ -1423,7 +1423,7 @@ async function settingsView() {
         : `<div class="item"><div class="grow"><b>Closing the lid puts it to sleep</b><div class="s">Changing that needs admin rights on this Mac. Instead, leave the lid open and lock it, or plug in a charger and an external screen (a $5 HDMI dummy plug works) and it stays awake closed.</div></div></div>`}
       </div>
       <div class="section"><h2>Notifications</h2></div>
-      <div class="group"><div class="item"><div class="grow"><b>Notify this device</b><div class="s">When an agent needs you, finishes, looks stuck, or a limit will run out early.${macs().length > 1 ? ' One Mac at a time: turning it on here moves notifications to this Mac.' : ''}</div></div>
+      <div class="group"><div class="item"><div class="grow"><b>Notify this device</b><div class="s">When an agent needs you, finishes, or looks stuck. Claude usage alerts are off.${macs().length > 1 ? ' One Mac at a time: turning it on here moves notifications to this Mac.' : ''}</div></div>
         ${'PushManager' in window && window.isSecureContext && location.protocol === 'https:' ? `<label class="switch"><input type="checkbox" id="push" ${pushOn ? 'checked' : ''}><i></i></label>` : `<span class="small muted" style="max-width:40%;text-align:right">${/iPhone|iPad/.test(navigator.userAgent) && !navigator.standalone ? 'Add to Home Screen first' : 'Needs the https phone link'}</span>`}</div>
         ${pushOn ? '<div class="item"><button class="small" id="test-push">Send a test notification</button></div>' : ''}
         <div class="item"><div class="grow"><b>Daily summary</b><div class="s">One notification in the evening: what your agents did today and what still needs you.</div></div><label class="switch"><input type="checkbox" id="summary" ${s.summary.on ? 'checked' : ''}><i></i></label></div>

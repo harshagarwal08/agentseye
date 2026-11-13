@@ -125,7 +125,6 @@ export class Room {
     this.socket = null;
     this.macId = null;
     this.pending = new Map();
-    this.next = 1;
   }
 
   get online() { return Boolean(this.socket); }
@@ -197,7 +196,7 @@ export class Room {
     const legacy = own ? '' : cookieValue(jar, 'agentseye');
     if (own || legacy) headers.cookie = `agentseye=${own || legacy}`;
     const secure = url.protocol === 'https:' ? '; Secure' : '';
-    const id = this.next++;
+    const id = crypto.randomUUID();
     const socket = this.socket;
     return new Promise(resolve => {
       let controller;

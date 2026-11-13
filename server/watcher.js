@@ -83,6 +83,8 @@ export function start() {
   const day = t => new Date(t).toLocaleString([], { weekday:'short', hour:'numeric', minute:'2-digit' });
   setInterval(async () => {
     for (const u of await usage().catch(() => [])) {
+      // Claude usage remains visible in the app, without push alerts.
+      if (u.harness === 'claude') continue;
       for (const w of u.windows || []) {
         const key = `${u.harness}:${w.key}:${w.resetsAt}`;
         // An early warning: at this rate the limit runs out before it resets (and within two days).

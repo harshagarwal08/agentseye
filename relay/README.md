@@ -31,7 +31,10 @@ npx wrangler deploy       # → https://agentseye-relay.<your-account>.workers.d
 Then on the Mac, open **Settings → Phone access → Relay settings**, paste the relay address, and enter your AgentsEye password if asked. Turn on the relay, then scan the QR code with your phone. If it is already on, toggle it off and on to apply the new address.
 
 Each Mac gets its own Durable Object. The first connection for a Mac id registers a hash of its secret; nobody
-else can claim that id afterwards.
+else can claim that id afterwards. WebSocket hibernation keeps idle connections open without keeping the object
+in memory. Heartbeat pings receive automatic replies without waking it; authenticated socket attachments restore
+the connection after hibernation. Active phone requests still use compute duration. An existing daily quota block
+is not reset by deploying a fix; it clears at Cloudflare’s next daily reset.
 
 ## Or self-host on any Node server
 
