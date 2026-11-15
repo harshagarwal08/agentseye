@@ -24,7 +24,7 @@ Forgot to lock your Mac? Do it from your phone. Let your agents keep working whi
 Think of it like a baby monitor for your coding agents.
 
 1. **A small app runs quietly on your Mac.** It watches your coding agents (Claude Code, Codex, Gemini and others): what they're working on, whether they're done, and whether they're stuck waiting for you.
-2. **Your phone connects to it through your own secure "mailbox" on the internet** (we call it the relay). It runs on your own free Cloudflare account, so it's yours alone. Your Mac and your phone both talk to the mailbox, so your phone can reach your Mac from anywhere: home, office, or a coffee shop. You don't need to set up your Wi-Fi or router.
+2. **Your phone connects to it through your own secure "mailbox" on the internet** (we call it the relay). It runs on your own free Cloudflare account, so it's yours alone. (Prefer Tailscale or a quick link? Those work too.) Your Mac and your phone both talk to the mailbox, so your phone can reach your Mac from anywhere: home, office, or a coffee shop. You don't need to set up your Wi-Fi or router.
 3. **Everything is locked before it leaves your Mac.** Messages are scrambled with a key made from your password, and only your Mac and your phone know that password. The mailbox passes the locked messages along but cannot read them.
 4. **When an agent needs you, your phone buzzes.** Tap it, see what the agent is asking, and answer. The agent carries on, and you never had to walk back to your desk.
 
@@ -75,11 +75,17 @@ Choose a strong, unique AgentsEye password in the page opened on your Mac (http:
 
 ### 3. Connect your phone
 
-Tap **Connect my phone**. A Terminal window opens and asks you to sign in to Cloudflare in the browser (a free account is enough; sign up there if you don't have one). It puts your private relay on *your* account in about a minute. Then a QR code appears on the Mac page: scan it with your phone's camera and sign in with your password.
+Tap **Connect my phone** and pick how your phone reaches the Mac:
+
+- **Your own relay** (recommended): a Terminal window asks you to sign in to Cloudflare in the browser (free account; sign up there if needed) and puts a private relay on *your* account in about a minute. End-to-end encrypted, and the link never changes.
+- **Tailscale:** if you already use it on your Mac and phone.
+- **Quick link:** no account at all. A temporary address that changes when the Mac restarts.
+
+A QR code then appears on the Mac page: scan it with your phone's camera and sign in with your password. If one way is blocked (company Macs often block something), pick another.
 
 <img src="docs/images/connect.png" width="640" alt="Demo: the Mac page shows a QR code to scan with your phone">
 
-Same thing from Terminal: `agentseye relay deploy`. Rather not use Cloudflare? See [other connection options](#connection-options).
+Own relay from Terminal: `agentseye relay deploy`. More detail: [connection options](#connection-options).
 
 The QR code is single-use and expires after 10 minutes. Signing in without a valid pairing code requires device approval on your Mac.
 
@@ -164,7 +170,7 @@ Pick whichever suits you in **Settings → Phone access**. You can change it any
 |---|---|---|
 | **Your own relay** (default) | **Connect my phone**, or `agentseye relay deploy`. Free Cloudflare account | Everyone. Private, end-to-end encrypted, works on company Macs behind proxies. Redeploys itself when AgentsEye updates. |
 | **Tailscale** | Tailscale on Mac and phone | Private tailnet access with a stable address. |
-| **Cloudflare Tunnel** | One tap, no account; installs cloudflared privately, no admin | A quick public HTTPS link. The address changes when it restarts. |
+| **Quick link** (Cloudflare Tunnel) | One tap, no account; installs cloudflared privately, no admin | A quick public HTTPS link. The address changes when it restarts. |
 | **Your own server** | `docker build -f relay/Dockerfile .` on any VPS, or `node relay/server.js` | Teams, or anyone who'd rather not use Cloudflare. See [relay/README.md](relay/README.md). |
 
 Behind a company proxy where Cloudflare's browser sign-in fails? Create an API token (Cloudflare dashboard → My Profile → API Tokens → "Edit Cloudflare Workers" template) and run `CLOUDFLARE_API_TOKEN=<token> agentseye relay deploy`.

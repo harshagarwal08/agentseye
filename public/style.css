@@ -526,3 +526,7 @@ button.primary.busy::after, button.good.busy::after, .send.busy::after { border-
 .guide .chip { font-size:11px; padding:2px 8px; vertical-align:2px; }
 .hero-head a { white-space:nowrap; color:var(--accent); text-decoration:none; font-weight:600; }
 .connect .small a { text-decoration:none; font-weight:600; }
+
+.sheet .choice { display:block; width:100%; text-align:left; padding:12px 14px; border-radius:12px; }
+.sheet .choice .chip { margin-left:6px; vertical-align:middle; }
+.sheet .choice .small { margin-top:3px; font-weight:400; }

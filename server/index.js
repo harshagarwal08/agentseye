@@ -366,7 +366,7 @@ const routes = {
     const [ts, pw, svc] = await Promise.all([tailscale.status(), power.status(), service.status()]);
     const devices = auth.listDevices();
     return {
-      phoneLink:Boolean(relay.link()) || ts.serving || tunnel.status().status === 'on', relay:relay.status().status, relayEnabled:relay.settings().enabled, relayError:relay.status().error, relayDeploying:relayDeploying(),
+      phoneLink:Boolean(relay.link()) || ts.serving || tunnel.status().status === 'on', relay:relay.status().status, relayEnabled:relay.settings().enabled, relayError:relay.status().error, relayDeploying:relayDeploying(), relaySet:Boolean(relay.settings().url),
       tailscale:ts.state, tailscaleServing:Boolean(ts.serving), cloudflare:tunnel.status().status,
       phoneSignedIn:devices.some(d => d.remote && d.approved),
       homeScreen:devices.some(d => d.remote && d.approved && d.standalone),

@@ -434,11 +434,40 @@ function connectBlock(st, { inSettings = false } = {}) {
     <button class="small" data-connect>Open Terminal again</button></div></div>`;
   const connecting = st.relayEnabled && !st.relayError;
   return `<div class="connect"><div class="grow">${st.relayError ? `<div class="connection-error small">${esc(st.relayError)}</div>` : ''}
-    <button class="primary" data-connect ${connecting ? 'disabled' : ''}>${connecting ? '<span class="spin"></span> Connecting…' : 'Connect my phone'}</button>
-    <div class="small muted">${connecting ? '' : 'Sets up your own private relay on a free Cloudflare account, about a minute. '}Encrypted end to end.${inSettings ? '' : ' <a href="#/settings">Other ways</a>'}</div></div></div>`;
+    <button class="primary" data-connect ${st.relaySet ? '' : `data-choose="${esc(st.tailscale || '')}"`} ${connecting ? 'disabled' : ''}>${connecting ? '<span class="spin"></span> Connecting…' : 'Connect my phone'}</button>
+    <div class="small muted">${st.relaySet ? 'Encrypted end to end.' : 'Free. Pick how: your own relay, Tailscale, or a quick link.'}${inSettings ? '' : ' <a href="#/settings">Settings</a>'}</div></div></div>`;
+}
+// No relay yet: let people pick. Company Macs often block one way or another, so all three are offered.
+function chooseConnection(ts) {
+  return new Promise(resolve => sheet(`<h3>How should your phone reach this Mac?</h3>
+    <button class="choice" data-pick="relay"><b>Your own relay</b> <span class="chip green">Recommended</span><div class="small muted">Free Cloudflare account, about a minute. Private, end-to-end encrypted, link never changes.</div></button>
+    <button class="choice" data-pick="tailscale"><b>Tailscale</b><div class="small muted">${ts === 'running' ? 'Tailscale is running here. Your phone needs the Tailscale app too.' : 'Needs the Tailscale app on this Mac and your phone. Opens Tailscale.'}</div></button>
+    <button class="choice" data-pick="tunnel"><b>Quick link</b><div class="small muted">No account. A temporary Cloudflare address that changes when the Mac restarts.</div></button>
+    <button class="ghost" data-close>Cancel</button>`, card => {
+    card.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { closeSheet(); resolve(b.dataset.pick); });
+    card.querySelector('[data-close]').addEventListener('click', () => resolve(''));
+  }));
+}
+async function startTunnel() {
+  let r = await api('/api/tunnel', { on:true });
+  if (r.status !== 'missing') return;
+  await api('/api/tunnel/install', {});
+  for (let i = 0; i < 45 && r.status === 'missing'; i++) { await new Promise(ok => setTimeout(ok, 2000)); r = await api('/api/tunnel', { on:true }); }
+  if (r.status === 'missing') throw new Error('Could not download cloudflared. Try again, or pick another way.');
 }
 function bindConnect(root, after) {
-  root.querySelector('[data-connect]')?.addEventListener('click', e => attempt(async () => {
+  const button = root.querySelector('[data-connect]');
+  button?.addEventListener('click', e => attempt(async () => {
+    const choose = button.dataset.choose;
+    if (choose !== undefined) {
+      const pick = await chooseConnection(choose);
+      if (!pick) return;
+      if (pick === 'tailscale') {
+        if (choose === 'running') await api('/api/tailscale', { on:true }); else await api('/api/tailscale/open', {});
+        return setTimeout(after, 800);
+      }
+      if (pick === 'tunnel') { await startTunnel(); return setTimeout(after, 800); }
+    }
     try { await api('/api/phone/connect', {}); }
     catch (err) {
       if (err.status !== 409) throw err;
