@@ -8,7 +8,7 @@ const bytes = n => { if (n == null) return '—'; const u = ['B', 'KB', 'MB', 'G
 const ago = t => { if (!t) return ''; const s = Math.round((Date.now() - new Date(t)) / 1000); if (s < 45) return 'just now'; if (s < 3600) return `${Math.round(s / 60)}m ago`; if (s < 86400) return `${Math.round(s / 3600)}h ago`; return `${Math.round(s / 86400)}d ago`; };
 const home = p => String(p || '').replace(/^\/Users\/[^/]+/, '~');
 const base = p => String(p || '').split('/').filter(Boolean).pop() || '~';
-// Tool-made folders ("2026-10-29-can-you-find-vedya-506b6-c4") read better as "can you find vedya".
+// Tool-made folders ("2026-10-29-fix-the-login-bug-506b6-c4") read better as "fix the login bug".
 const folder = p => { const n = base(p); const t = n.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/(-[0-9a-f]{4,})+(-[0-9a-z]{1,3})?$/i, ''); return t === n ? n : t.replace(/-/g, ' '); };
 const pct = (a, b) => (b ? Math.round(a / b * 100) : 0);
 const level = p => (p > 90 ? 'bad' : p > 75 ? 'warn' : '');
@@ -275,9 +275,11 @@ async function gate() {
     return;
   }
   g.innerHTML = `<form class="box" id="signin"><img src="/icon.svg" alt=""><h1>AgentsEye</h1>
-    <p>${setup ? 'Choose a password. You will use it to sign in from your phone.' : pairCode() ? 'Paired with your Mac. Enter your password.' : 'Your Mac and its coding agents, in your pocket.'}</p>
-    <input id="pw" type="password" placeholder="Password" autocomplete="${setup ? 'new-password' : 'current-password'}" minlength="8" required>
-    <button class="primary" type="submit">${setup ? 'Set password' : 'Sign in'}</button><div class="error" id="err"></div></form>`;
+    ${setup ? '<p class="tagline">Watch and drive every coding agent on this Mac from your phone.</p>' : ''}
+    <p>${setup ? 'Pick a password. Your phone signs in with it.' : pairCode() ? 'Paired with your Mac. Enter your password.' : 'Your Mac and its coding agents, in your pocket.'}</p>
+    <input id="pw" type="password" placeholder="${setup ? 'Password (8+ characters)' : 'Password'}" autocomplete="${setup ? 'new-password' : 'current-password'}" minlength="8" required>
+    <button class="primary" type="submit">${setup ? 'Continue' : 'Sign in'}</button><div class="error" id="err"></div>
+    ${setup ? '<div class="small muted works-with">Works with Claude Code, Codex, Gemini, OpenCode, Cursor, Aider and more.</div>' : ''}</form>`;
   $('#pw').focus();
   $('#signin').onsubmit = async e => {
     e.preventDefault();
@@ -419,33 +421,59 @@ function installSheet() {
 }
 
 // ---------- Start guide ----------
-// Seven steps, each ticked off from the Mac's real state rather than from what was clicked.
+// Five steps, each ticked off from the Mac's real state rather than from what was clicked.
 let setup = null;
 const loadSetup = async () => { setup = await api('/api/setup'); return setup; };
+
+// The one thing a new user must do at the Mac: get AgentsEye onto their phone. One tap, then a QR code.
+function connectBlock(st, { inSettings = false } = {}) {
+  if (st.phoneLink) return `<div class="connect"><img class="connect-qr" src="/api/pair/qr?ts=${Math.floor(Date.now() / 300000)}" alt="QR code that opens AgentsEye on your phone">
+    <div class="grow"><b>Point your phone's camera here</b><div class="small muted">Open the link, sign in with your password. Works from anywhere, encrypted end to end.</div></div></div>`;
+  const connecting = st.relayEnabled && !st.relayError;
+  return `<div class="connect"><div class="grow">${st.relayError ? `<div class="connection-error small">${esc(st.relayError)}</div>` : ''}
+    <button class="primary" data-connect ${connecting ? 'disabled' : ''}>${connecting ? '<span class="spin"></span> Connecting…' : 'Connect my phone'}</button>
+    <div class="small muted">Free, nothing to install, encrypted end to end.${inSettings ? '' : ' <a href="#/settings">Other ways</a>'}</div></div></div>`;
+}
+function bindConnect(root, after) {
+  root.querySelector('[data-connect]')?.addEventListener('click', e => attempt(async () => {
+    try { await api('/api/phone/connect', {}); }
+    catch (err) {
+      if (err.status !== 409) throw err;
+      const password = await askPassword('Turn on encryption', 'Enter your AgentsEye password once. Only your devices can read what goes through the relay.');
+      if (!password) return;
+      await api('/api/phone/connect', { password });
+    }
+    e.target.disabled = true;
+    e.target.innerHTML = '<span class="spin"></span> Connecting…';
+    setTimeout(after, 1500);
+  }));
+}
+function askPassword(title, detail) {
+  return new Promise(resolve => sheet(`<h3>${esc(title)}</h3><p class="muted small">${esc(detail)}</p><form id="ask-pw"><input id="ask-pw-in" type="password" placeholder="Password" autocomplete="current-password" required><button class="primary" type="submit">Continue</button></form><button class="ghost" data-close>Cancel</button>`, card => {
+    card.querySelector('#ask-pw-in').focus();
+    card.querySelector('#ask-pw').onsubmit = e => { e.preventDefault(); const v = card.querySelector('#ask-pw-in').value; closeSheet(); resolve(v); };
+    card.querySelector('[data-close]').addEventListener('click', () => resolve(''));
+  }));
+}
+
 function guideSteps(st) {
   const onMac = me.local;
   return [
-    { id:'link', done:st.phoneLink, title:'Turn on phone access',
-      why:'Gives AgentsEye a secure link your phone can open from anywhere. The AgentsEye relay needs nothing installed (good for company Macs) and is encrypted end to end; Tailscale and Cloudflare are the alternatives.',
-      action:onMac ? '<a href="#/settings"><button class="small primary">Open Settings</button></a>' : '' , macOnly:true },
-    { id:'signin', done:st.phoneSignedIn, title:'Sign in on your phone',
-      why:'Scan the QR code on your Mac with your phone camera, then enter your password. Scanning skips the approval step.',
-      action:onMac ? (st.phoneLink ? '<img class="guide-qr" src="/api/pair/qr?ts=guide" alt="QR code">' : '<span class="small muted">Turn on phone access first</span>') : '', macOnly:true },
+    { id:'phone', done:st.phoneSignedIn, title:'Connect your phone',
+      why:onMac ? '' : 'Scan the QR code on your Mac with your phone camera.',
+      action:onMac ? connectBlock(st) : '', macOnly:true },
     { id:'home', done:st.homeScreen, title:'Add it to your Home Screen',
-      why:'AgentsEye then opens full screen like an app. On iPhone this is also required for notifications.',
-      action:isPhone && !standalone() ? '<button class="small primary" data-install>Show me how</button>' : '<span class="small muted">Do this on your phone</span>' },
+      why:'Opens full screen like an app. iPhone needs this for notifications.',
+      action:isPhone && !standalone() ? '<button class="small primary" data-install>Show me how</button>' : '<span class="small muted">On your phone</span>' },
     { id:'notify', done:st.notifications, title:'Turn on notifications',
-      why:'Get a ping when an agent needs your OK or finishes.',
-      action:canPush() ? '<button class="small primary" data-push>Turn on</button>' : `<span class="small muted">${isIOS && !standalone() ? 'Open AgentsEye from your Home Screen first' : 'Do this on your phone'}</span>` },
-    { id:'approvals', done:st.approvals, title:"Answer Claude's prompts and questions",
-      why:'When Claude asks before running a command, or asks you to pick an option, it comes to your phone (Terminal and VS Code). At your desk Claude still asks in its own window.',
+      why:'A ping when an agent needs you or finishes.',
+      action:canPush() ? '<button class="small primary" data-push>Turn on</button>' : `<span class="small muted">${isIOS && !standalone() ? 'Open AgentsEye from your Home Screen first' : 'On your phone'}</span>` },
+    { id:'running', done:st.keepAwake && st.startAtLogin, title:'Keep agents running',
+      why:'Keeps the Mac awake while plugged in and starts AgentsEye at login. Lock the screen as usual; agents keep going.',
+      action:onMac ? '<button class="small primary" data-running>Turn on</button>' : '<button class="small primary" data-awake>Keep Mac awake</button>' },
+    { id:'approvals', done:st.approvals, title:"Answer Claude's prompts from your phone", optional:true,
+      why:'Allow commands and pick options for Claude Code without walking back to your desk.',
       action:onMac ? '<button class="small primary" data-hook>Turn on</button>' : '', macOnly:true },
-    { id:'awake', done:st.keepAwake, title:'Keep your Mac awake',
-      why:'Agents stop when the Mac sleeps. Leave the lid open and lock the screen; AgentsEye keeps it awake while plugged in.',
-      action:'<button class="small primary" data-awake>Turn on</button>' },
-    { id:'login', done:st.startAtLogin, title:'Start AgentsEye at login',
-      why:'So it is always there after a restart, without a Terminal window.',
-      action:onMac ? '<button class="small primary" data-login>Turn on</button>' : '', macOnly:true },
   ];
 }
 const canPush = () => 'PushManager' in window && window.isSecureContext && location.protocol === 'https:' && (!isIOS || standalone());
@@ -453,11 +481,13 @@ const canPush = () => 'PushManager' in window && window.isSecureContext && locat
 function guideCard() {
   if (!setup || localStorage.getItem('guide-hidden')) return '';
   const steps = guideSteps(setup);
-  const left = steps.filter(x => !x.done);
+  const left = steps.filter(x => !x.done && !x.optional);
   if (!left.length) return '';
   const next = left[0];
-  return `<a class="guide-card" href="#/guide"><div class="grow"><div class="small muted">Get started · ${steps.length - left.length} of ${steps.length} done</div><b>Next: ${esc(next.title)}</b>
-    <div class="meter"><i style="width:${Math.round((steps.length - left.length) / steps.length * 100)}%"></i></div></div><span class="chev">›</span></a>`;
+  // At the Mac, before any phone is connected, the connection itself is the card: no detour through the guide.
+  if (next.id === 'phone' && me.local) return `<div class="hero"><div class="hero-head"><b>Get your agents on your phone</b><span class="small muted"><a href="#/guide">Setup guide</a></span></div>${connectBlock(setup)}</div>`;
+  return `<a class="guide-card" href="#/guide"><div class="grow"><div class="small muted">Get started · ${steps.length - 1 - left.length} of ${steps.length - 1} done</div><b>Next: ${esc(next.title)}</b>
+    <div class="meter"><i style="width:${Math.round((steps.length - 1 - left.length) / (steps.length - 1) * 100)}%"></i></div></div><span class="chev">›</span></a>`;
 }
 
 async function guideView() {
@@ -465,24 +495,27 @@ async function guideView() {
   const render = async () => {
     const st = await loadSetup();
     const steps = guideSteps(st);
-    const done = steps.filter(x => x.done).length;
+    const done = steps.filter(x => x.done || x.optional).length;
     view.innerHTML = `<div class="top"><button class="back" onclick="history.back()" aria-label="Back">‹</button><h1>Start guide</h1></div>
-      <p class="muted" style="margin-top:-8px">${done === steps.length ? 'All set. AgentsEye is ready to use from your phone.' : `${done} of ${steps.length} done. Steps tick themselves off as you go.`}</p>
-      <ol class="guide">${steps.map((x, i) => `<li class="${x.done ? 'done' : ''}"><span class="num">${x.done ? '✓' : i + 1}</span><div class="grow"><b>${esc(x.title)}</b><div class="small muted">${x.why}</div>
+      <p class="muted" style="margin-top:-8px">${done === steps.length ? 'All set. AgentsEye is ready on your phone.' : 'Steps tick themselves off as you go.'}</p>
+      <ol class="guide">${steps.map((x, i) => `<li class="${x.done ? 'done' : ''}"><span class="num">${x.done ? '✓' : i + 1}</span><div class="grow"><b>${esc(x.title)}</b>${x.optional ? ' <span class="chip">Optional</span>' : ''}${x.why ? `<div class="small muted">${x.why}</div>` : ''}
         ${x.done ? '' : `<div class="guide-act">${x.macOnly && !me.local ? '<span class="small muted">Do this on your Mac</span>' : x.action}</div>`}</div></li>`).join('')}</ol>
       ${done < steps.length ? '<button class="ghost" id="hide-guide" style="width:100%">Hide from Home</button>' : ''}`;
     view.querySelector('[data-install]')?.addEventListener('click', installSheet);
     view.querySelector('[data-push]')?.addEventListener('click', () => attempt(async () => { await enablePush(); render(); }, 'Notifications on'));
     view.querySelector('[data-hook]')?.addEventListener('click', () => attempt(async () => { await api('/api/approvals/hook', { install:true }); render(); }, 'Installed · Restart Claude sessions'));
     view.querySelector('[data-awake]')?.addEventListener('click', () => attempt(async () => { await api('/api/power/keep-awake', { mode:'plugged' }); render(); }, 'Keep awake on · When plugged in'));
-    view.querySelector('[data-login]')?.addEventListener('click', () => attempt(async () => {
+    bindConnect(view, render);
+    view.querySelector('[data-running]')?.addEventListener('click', () => attempt(async () => {
+      await api('/api/power/keep-awake', { mode:'plugged' });
+      if (st.startAtLogin) return render();
       await api('/api/service/install', {});
       toast('Restarting AgentsEye…');
       setTimeout(() => location.reload(), 8000);
     }));
     $('#hide-guide')?.addEventListener('click', () => { localStorage.setItem('guide-hidden', '1'); location.hash = '#/'; });
   };
-  await firstLoad(view, render, `<div class="top"><h1>Start guide</h1></div>${skeleton(7, 'guide')}`);
+  await firstLoad(view, render, `<div class="top"><h1>Start guide</h1></div>${skeleton(5, 'guide')}`);
   every(5000, () => render().catch(() => {}));
 }
 
@@ -688,7 +721,7 @@ function agentRow(a) {
   return `<a class="agent ${st}" href="${agentHref(a)}">
     <div class="avatar">${avatar(agentKey(a), { waiting:'waiting', busy:'busy', open:'open', done:'off', failed:'off' }[st])}</div>
     <div class="grow"><div class="t">${esc(a.name || a.title)}</div><div class="s">${esc(sub || agentName(a))}</div></div>
-    <div class="side">${{ waiting:'<span class="chip amber">Needs you</span>', busy:'<span class="chip blue"><span class="spin"></span>Working</span>', failed:'<span class="chip red">Failed</span>' }[st] || ''}<span class="when">${ago(a.updatedAt)}</span></div></a>`;
+    <div class="side">${st === 'failed' ? '<span class="chip red">Failed</span>' : ''}<span class="when">${st === 'busy' ? '<span class="spin"></span>' : st === 'waiting' ? '<b class="needs">Reply</b>' : ago(a.updatedAt)}</span></div></a>`;
 }
 
 async function homeView() {
@@ -718,7 +751,7 @@ async function homeView() {
       ${section('Needs you', groups.waiting)}
       ${section('Working', groups.busy)}
       ${recent.length ? `<div class="section"><h2>Recent</h2></div><div class="agents">${recent.slice(0, limit).map(agentRow).join('')}</div>${recent.length > 8 && !term ? `<button class="more" id="more">${showAll ? 'Show less' : `Show ${recent.length - 8} more`}</button>` : ''}` : ''}
-      ${!d.agents.length ? `<div class="empty-state"><div class="big">👀</div><b>No agents yet</b><div class="small muted">${d.t3.connected ? 'Start a chat with the + button.' : 'Start Claude Code, Codex, Gemini, OpenCode or any coding agent on your Mac and it shows up here. Or tap + to start one.'}</div></div>` : !shown.length ? '<div class="empty">No chats match.</div>' : ''}
+      ${!d.agents.length ? `<div class="empty-state"><div class="crew">${['claude', 'codex', 'gemini', 'opencode', 'terminal'].map(k => `<span class="avatar">${avatar(k, 'open')}</span>`).join('')}</div><b>No agents running</b><div class="small muted">Start Claude Code, Codex, Gemini, OpenCode, Cursor CLI, Aider or any agent on your Mac. It shows up here by itself.</div><button class="primary small" id="empty-new">Start one from here</button></div>` : !shown.length ? '<div class="empty">No chats match.</div>' : ''}
       ${!d.t3.connected && d.t3.installed ? `<div class="small muted center">T3 Code isn't running, so its chats aren't shown.</div>` : ''}
       ${limitsCard(d.limits)}`;
     $('#home-search').hidden = d.agents.length < 6;
@@ -727,6 +760,7 @@ async function homeView() {
     list.innerHTML = html;
     list.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; paintList(); });
     $('#more')?.addEventListener('click', () => { showAll = !showAll; paintList(); });
+    $('#empty-new')?.addEventListener('click', () => newChatSheet(data));
     $('#limits')?.addEventListener('click', () => usageSheet(data.limits));
   };
   const render = async () => {
@@ -745,6 +779,7 @@ async function homeView() {
     shownA = html;
     head.innerHTML = html;
     bindApprovals(head, render);
+    bindConnect(head, () => loadSetup().then(() => { shownA = ''; return render(); }));
     $('#install')?.addEventListener('click', installSheet);
     $('#mac-switch')?.addEventListener('click', macsSheet);
     $('#install-x')?.addEventListener('click', () => { localStorage.setItem('install-hidden', '1'); shownA = ''; render(); });
@@ -755,7 +790,9 @@ async function homeView() {
   view.insertAdjacentHTML('beforeend', '<button class="fab" id="fab" aria-label="New chat">＋</button>');
   $('#fab').onclick = () => newChatSheet(data);
   loadSetup().then(() => { shownA = ''; return render(); }).catch(() => {});
-  every(30000, () => loadSetup().catch(() => {}));
+  // Quickly while a phone is being connected (the card turns into a QR code, then into the next step), else rarely.
+  let ticks = 0;
+  every(4000, () => { if ((me.local && !setup?.phoneSignedIn) || ++ticks % 8 === 0) loadSetup().catch(() => {}); });
   await firstLoad(list, render, skeletonHome());
   every(4000, () => render().catch(() => {}));
 }
@@ -1427,16 +1464,18 @@ async function settingsView() {
     // Phone access is set up at the Mac, so it comes first there; on a phone the everyday settings lead.
     const phoneAccess = `      <div class="section"><h2>Phone access</h2></div>
       <div class="group phone-access">
-        ${relayRow(s.relay, view.querySelector('#relay-config')?.open)}
-        ${ownRelayRow(s)}
-        <details class="connection-options" id="phone-options" ${(view.querySelector('#phone-options')?.open ?? (s.tailscale.serving || t.enabled || Boolean(t.error && t.status !== 'missing'))) ? 'open' : ''}><summary><span>Other connection options</span><span class="options-hint">Tailscale, Cloudflare Tunnel, your server</span></summary><div class="connection-choices">
+        ${s.phoneUrl || s.relay.enabled ? relayRow(s.relay, view.querySelector('#relay-config')?.open) : `<div class="item">${connectBlock({ phoneLink:false }, { inSettings:true })}</div>`}
+        ${s.phoneUrl ? ownRelayRow(s) : ''}
+        <details class="connection-options" id="phone-options" ${(view.querySelector('#phone-options')?.open ?? (s.tailscale.serving || t.enabled || Boolean(t.error && t.status !== 'missing'))) ? 'open' : ''}><summary><span>Other connection options</span><span class="options-hint">${s.phoneUrl ? 'Tailscale, Cloudflare Tunnel, your server' : 'Your own relay, Tailscale, Cloudflare Tunnel'}</span></summary><div class="connection-choices">
+        ${s.phoneUrl ? '' : ownRelayRow(s)}
+        ${s.phoneUrl || s.relay.enabled ? '' : relayRow(s.relay, view.querySelector('#relay-config')?.open)}
         ${!me.local ? '<p class="small muted connection-note">Set up these options on your Mac.</p>' : ''}
         <div class="item"><div class="grow"><b>Tailscale</b><div class="s">${{ missing:'Private access between your devices.', 'signed-out':'Sign in to Tailscale on both devices.', stopped:'Open Tailscale to connect.', running:s.tailscale.serving ? 'On · Private device connection' : 'Ready · Turn on phone access' }[s.tailscale.state] || 'Unavailable'}</div></div>
           ${me.local ? (s.tailscale.state === 'running' ? `<label class="switch"><input type="checkbox" id="ts" ${s.tailscale.serving ? 'checked' : ''}><i></i></label>` : `<button class="small" id="ts-open">${s.tailscale.state === 'missing' ? 'Get it' : 'Open'}</button>`) : ''}</div>
         <div class="item"><div class="grow"><b>Cloudflare Tunnel</b><div class="s">${{ on:'On · Public HTTPS link', missing:'No account needed. Installs cloudflared privately, no admin rights.', off:'Off · Create a public HTTPS link, no account needed', starting:'Starting…', restarting:'Reconnecting…' }[t.status] || esc(t.status)}</div></div>
           ${me.local ? (t.status === 'missing' ? `<button class="small primary" id="install-cf" ${s.installingCloudflared ? 'disabled' : ''}>${s.installingCloudflared ? 'Installing…' : 'Install'}</button>` : `<label class="switch"><input type="checkbox" id="tunnel" ${t.enabled ? 'checked' : ''}><i></i></label>`) : ''}</div>
         ${t.error ? `<div class="connection-error small">${esc(t.error)}</div>` : ''}
-        <div class="item"><div class="grow"><b>Your own server</b><div class="s">Run the relay anywhere with Docker or Node (see relay/README.md in the AgentsEye repository), then enter its address under Relay settings above.</div></div></div>
+        <div class="item"><div class="grow"><b>Your own server</b><div class="s">Run the relay anywhere with Docker or Node (see relay/README.md in the AgentsEye repository), then enter its address under Relay settings.</div></div></div>
         </div></details>
         ${s.phoneUrl && me.local ? `<div class="qr"><img src="/api/pair/qr?ts=${s.pairingAt}" alt="QR code to open AgentsEye on your phone"><b>Scan to connect your phone</b><div class="small muted" style="text-align:center">Sign in with your AgentsEye password. This QR code expires in 10 minutes.</div><div class="url mono muted">${esc(s.phoneUrl)}</div><button class="small" id="copy">Copy link</button></div>
           <div class="item"><div class="grow small muted">On iPhone: in Safari tap Share → <b>Add to Home Screen</b>, open AgentsEye from there, then turn on notifications below.</div></div>` : ''}
@@ -1479,6 +1518,7 @@ async function settingsView() {
     shown = html;
     view.innerHTML = html;
     $('#install-s')?.addEventListener('click', installSheet);
+    bindConnect(view, () => { shown = ''; render(); });
     bindRelayRow(view, s.relay, () => { shown = ''; render(); });
     $('#own-relay')?.addEventListener('click', () => attempt(() => api('/api/relay/own', {}), 'Follow the steps in the Terminal window on your Mac'));
     view.querySelectorAll('[data-copy-phone]').forEach(b => b.onclick = () => attempt(() => navigator.clipboard.writeText(b.dataset.copyPhone), 'Link copied'));

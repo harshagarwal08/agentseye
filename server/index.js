@@ -334,6 +334,17 @@ const routes = {
     if (b.enabled && !auth.relayKeyInfo()) throw fail('Enter your AgentsEye password once to turn on encryption for the relay.', 409);
     return relay.configure({ url:b.url, enabled:b.enabled });
   },
+  // One tap from the start guide / home: use whatever phone access is already on, else turn on the relay
+  // (the one this Mac was installed with, or the shared quick-start one).
+  'POST /api/phone/connect':async (b, _, req) => {
+    localOnly(req);
+    if (b.password && !auth.checkPassword(String(b.password))) throw fail('Wrong password.', 401);
+    if (b.password) auth.ensureRelayKey(String(b.password));
+    if (phoneUrl()) return { ok:true, url:phoneUrl() };
+    if (!auth.relayKeyInfo()) throw fail('Enter your AgentsEye password once to turn on encryption.', 409);
+    relay.configure({ url:relay.settings().url || relay.DEFAULT_URL, enabled:true });
+    return { ok:true, connecting:true };
+  },
   'POST /api/tailscale':async (b, _, req) => { localOnly(req); return tailscale.setServing(Boolean(b.on)); },
   'POST /api/tailscale/open':async (_, __, req) => { localOnly(req); await run('/usr/bin/open', ['-a', 'Tailscale']).then(r => r.ok ? r : run('/usr/bin/open', ['https://tailscale.com/download/mac'])); return { ok:true }; },
   'POST /api/power/keep-awake':b => power.setKeepAwake(String(b.mode)),
@@ -354,7 +365,7 @@ const routes = {
     const [ts, pw, svc] = await Promise.all([tailscale.status(), power.status(), service.status()]);
     const devices = auth.listDevices();
     return {
-      phoneLink:Boolean(relay.link()) || ts.serving || tunnel.status().status === 'on', relay:relay.status().status,
+      phoneLink:Boolean(relay.link()) || ts.serving || tunnel.status().status === 'on', relay:relay.status().status, relayEnabled:relay.settings().enabled, relayError:relay.status().error,
       tailscale:ts.state, tailscaleServing:Boolean(ts.serving), cloudflare:tunnel.status().status,
       phoneSignedIn:devices.some(d => d.remote && d.approved),
       homeScreen:devices.some(d => d.remote && d.approved && d.standalone),
@@ -444,6 +455,8 @@ async function handleAuth(req, res, url) {
     if (!local) throw fail('Set the password on the Mac itself.', 403);
     if (auth.hasPassword()) throw fail('A password is already set.', 409);
     auth.setPassword(body.password);
+    // Encryption for the relay comes from the password, so derive it now: "Connect my phone" is then one tap.
+    if (local) auth.ensureRelayKey(body.password);
     return send(res, 200, { ok:true }, cookie(auth.createDevice({ local:true, userAgent:req.headers['user-agent'] }).token));
   }
   if (key === 'POST /api/auth/login') {

@@ -1,6 +1,6 @@
 {
   "name": "agentseye",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Watch and drive every coding agent on your Mac from your phone: Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Copilot, Aider and more. End-to-end encrypted, bring your own relay.",
   "license": "MIT",
   "private": true,

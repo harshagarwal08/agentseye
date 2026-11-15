@@ -35,7 +35,7 @@ const lines = text => text.split('\n').flatMap(line => { try { return line ? [JS
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const clip = (text, n = 140) => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
-// Folders made by tools like T3 Code look like "2026-10-29-can-you-find-vedya-506b6-c4"; show "can you find vedya".
+// Folders made by tools like T3 Code look like "2026-10-29-fix-the-login-bug-506b6-c4"; show "fix the login bug".
 export function folderName(cwd) {
   const name = path.basename(String(cwd || ''));
   const tidy = name.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/(-[0-9a-f]{4,})+(-[0-9a-z]{1,3})?$/i, '');

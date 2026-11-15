@@ -16,7 +16,30 @@ Forgot to lock your Mac? Do it from your phone. Let your agents keep working whi
 
 **Most tested with Claude Code and Codex.** The other integrations are newer. Please [report](https://github.com/harshagarwal08/agentseye/issues) anything that doesn't work with your agent.
 
-[Get started](#get-started) · [Walkthrough](#walkthrough) · [Security](#security-and-data) · [Contribute](#contribute)
+[How it works](#how-it-works) · [Get started](#get-started) · [Walkthrough](#walkthrough) · [Security](#security-and-data) · [Contribute](#contribute)
+
+## How it works
+
+**The short version:** your AI coding helpers keep working on your Mac. AgentsEye lets you check on them, and talk to them, from your phone.
+
+Think of it like a baby monitor for your coding agents.
+
+1. **A small app runs quietly on your Mac.** It watches your coding agents (Claude Code, Codex, Gemini and others): what they're working on, whether they're done, and whether they're stuck waiting for you.
+2. **Your phone connects to it through a secure "mailbox" on the internet** (we call it the relay). Your Mac and your phone both talk to the mailbox, so your phone can reach your Mac from anywhere: home, office, or a coffee shop. You don't need to set up your Wi-Fi or router.
+3. **Everything is locked before it leaves your Mac.** Messages are scrambled with a key made from your password, and only your Mac and your phone know that password. The mailbox passes the locked messages along but cannot read them.
+4. **When an agent needs you, your phone buzzes.** Tap it, see what the agent is asking, and answer. The agent carries on, and you never had to walk back to your desk.
+
+~~~
+   Your Mac                    The relay ("mailbox")                Your phone
+ ┌───────────────┐   locked   ┌──────────────────────┐   locked   ┌──────────────┐
+ │ Claude, Codex │ ─────────▶ │  passes messages on, │ ─────────▶ │  AgentsEye   │
+ │ Gemini, ...   │ ◀───────── │  can't read them     │ ◀───────── │  app         │
+ └───────────────┘            └──────────────────────┘            └──────────────┘
+~~~
+
+**What stays private:** your code, your chats and your files stay on your Mac. AgentsEye has no account system, no tracking and no analytics. It doesn't use any AI of its own; it only talks to the agents you already use.
+
+**Who can get in:** only devices that know your password *and* that you've approved (or that scanned the QR code on your Mac). You can sign any device out from Settings at any time.
 
 ## Walkthrough
 
@@ -49,11 +72,13 @@ The installer downloads AgentsEye to **~/.agentseye/app**, installs a private co
 
 ### 2. Set your password
 
-Choose a strong, unique AgentsEye password in the page opened on your Mac. You will use the same password on your phone.
+Choose a strong, unique AgentsEye password in the page opened on your Mac (http://localhost:4480). You will use the same password on your phone.
 
 ### 3. Connect your phone
 
-The installer starts you on the shared relay, so you can try it right away. On your Mac, open **Settings → Phone access**, check it shows **Connected**, then scan the QR code with your phone's camera and sign in.
+Tap **Connect my phone**. A QR code appears right there: scan it with your phone's camera and sign in with your password. That's it. (This uses the shared relay so you can try it right away.)
+
+<img src="docs/images/connect.png" width="640" alt="Demo: the Mac page shows a QR code to scan with your phone">
 
 For everyday use, give yourself a private relay (free, about a minute):
 
@@ -64,8 +89,6 @@ agentseye relay deploy        # or: Settings → Phone access → Get your own r
 It signs you in to Cloudflare in the browser (a free account is enough), deploys the relay to *your* account, and switches this Mac over. Then scan the new QR code. See [all connection options](#connection-options).
 
 The QR code is single-use and expires after 10 minutes. Signing in without a valid pairing code requires device approval on your Mac.
-
-<img src="docs/images/phone-access.png" width="390" alt="Demo phone access settings with connection status and Copy link">
 
 ### 4. Add it to your Home Screen
 
@@ -82,7 +105,7 @@ In Settings:
 - **Approvals → Answer Claude's prompts and questions here:** install the hook from the Mac, then restart your Claude sessions. Choose whether requests arrive when you are away or always.
 - **Keep agents running → Keep your Mac awake:** choose **When plugged in** or **Always** if you want agents to keep running while you step away.
 
-Start an agent on your Mac, then open **Agents** on your phone. The **Start guide** in Settings also tracks setup progress.
+Start an agent on your Mac, then open **Agents** on your phone. The **Start guide** (linked from the home screen and Settings) ticks these off as you go.
 
 ## What you can do
 

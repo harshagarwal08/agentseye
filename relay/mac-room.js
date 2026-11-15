@@ -1,5 +1,7 @@
 import { Room, sha256, MAC_ID } from './core.js';
 
+const SAVE_AHEAD = 10;
+
 // Cloudflare keeps these sockets connected while the object sleeps. Only active phone requests need memory.
 export class HibernatingMacRoom {
   constructor(state, env, version = '') {
@@ -42,24 +44,38 @@ export class HibernatingMacRoom {
       const res = await this.env.ASSETS.fetch(new Request(`https://assets${name}`));
       return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
     };
-    return this.room.serve(request, { ip:request.headers.get('x-agentseye-ip') || '', macId:request.headers.get('x-agentseye-mac'), read, version:this.version, allow:() => this.allow() });
+    return this.room.serve(request, { ip:request.headers.get('x-agentseye-ip') || '', macId:request.headers.get('x-agentseye-mac'), read, version:this.version, allow:() => this.allow(), charge:() => this.charge() });
   }
 
   // A shared relay (MAC_DAILY_LIMIT set) gives each Mac a daily share of requests, so one busy phone can't use up
-  // the operator's free Cloudflare quota for everyone. Counted in memory, saved every 20 requests: a count lost to a
-  // restart only errs in the user's favour. Personal relays (no limit) skip all of this.
-  async allow() {
+  // the operator's free Cloudflare quota for everyone. Personal relays (no limit) skip all of this.
+  // allow() only checks; charge() counts a request once the Mac has accepted it, so strangers sending junk to
+  // someone's Mac address can't use up that Mac's share (the Mac rejects what isn't sealed with its key).
+  // The count is saved ahead in blocks of SAVE_AHEAD: the object can sleep (losing memory) at any moment, and
+  // waking restores the saved, reserved count, so sleeping never resets the allowance.
+  exempt() {
     const limit = Number(this.env?.MAC_DAILY_LIMIT || 0);
     // UNLIMITED_MACS: comma-separated Mac ids the operator exempts (set as a secret, e.g. your own Macs).
-    if (!limit || String(this.env?.UNLIMITED_MACS || '').split(',').map(s => s.trim()).includes(this.room.macId)) return true;
+    return !limit || String(this.env?.UNLIMITED_MACS || '').split(',').map(s => s.trim()).includes(this.room.macId);
+  }
+  async today() {
     const day = new Date().toISOString().slice(0, 10);
     if (this.usage?.day !== day) {
       const stored = await this.state.storage.get('usage');
-      this.usage = stored?.day === day ? stored : { day, n:0 };
+      const n = stored?.day === day ? stored.n : 0;
+      this.usage = { day, n, saved:n };
     }
-    this.usage.n++;
-    if (this.usage.n % 20 === 0 || this.usage.n === limit + 1) await this.state.storage.put('usage', this.usage);
-    return this.usage.n <= limit;
+    return this.usage;
+  }
+  async allow() {
+    if (this.exempt()) return true;
+    return (await this.today()).n < Number(this.env.MAC_DAILY_LIMIT);
+  }
+  async charge() {
+    if (this.exempt()) return;
+    const u = await this.today();
+    u.n++;
+    if (u.n > u.saved) { u.saved = u.n + SAVE_AHEAD - 1; await this.state.storage.put('usage', { day:u.day, n:u.saved }); }
   }
 
   async webSocketMessage(socket, data) {

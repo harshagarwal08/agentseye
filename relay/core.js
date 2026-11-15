@@ -175,8 +175,8 @@ export class Room {
   }
 
   // A phone request for this Mac: the app's files come from the relay, encrypted calls go down to the Mac.
-  // allow(): false once this Mac has used up its share of a shared relay today (see mac-room.js).
-  async serve(request, { ip = '', macId, read, version = '', allow }) {
+  // allow(): false once this Mac has used up its share of a shared relay today; charge() counts an accepted one (mac-room.js).
+  async serve(request, { ip = '', macId, read, version = '', allow, charge }) {
     const url = new URL(request.url);
     const accept = request.headers.get('accept') || '';
     if (!this.socket && (TO_MAC.has(url.pathname) || (url.pathname === '/' && accept.includes('text/html')))) {
@@ -185,7 +185,12 @@ export class Room {
     if (url.pathname === '/api/e2e' && allow && !(await allow())) {
       return new Response(JSON.stringify({ error:OVER_LIMIT }), { status:429, headers:{ ...SECURITY, 'content-type':'application/json', 'cache-control':'no-store' } });
     }
-    if (TO_MAC.has(url.pathname)) return this.forward(request, { ip, macId });
+    if (TO_MAC.has(url.pathname)) {
+      const res = await this.forward(request, { ip, macId });
+      // Only requests the Mac accepted count toward a daily share; junk it rejected (4xx) costs the owner nothing.
+      if (url.pathname === '/api/e2e' && charge && res.status < 400) await charge();
+      return res;
+    }
     return shellFile(url.pathname, { macId, read, version });
   }
 

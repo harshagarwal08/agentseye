@@ -11,6 +11,7 @@ process.env.AGENTSEYE_HOME = path.join(home, '.agentseye');
 process.env.AGENTSEYE_USER_HOME = home;
 process.env.AGENTSEYE_PORT = '4499';
 process.env.AGENTSEYE_CLAUDE_SETTINGS = path.join(home, '.claude', 'settings.json');
+process.env.AGENTSEYE_RELAY_URL = 'http://127.0.0.1:9';
 
 const { createServer } = await import('../server/index.js');
 const auth = await import('../server/auth.js');
@@ -51,6 +52,17 @@ test('password setup happens on the Mac and blocks CSRF', async () => {
   mac = setup.cookie;
   assert.equal((await call('/api/auth/setup', { password:'another one' })).status, 409);
   assert.ok(Array.isArray((await call('/api/processes', undefined, { cookie:mac })).body));
+});
+
+test('connecting a phone is one tap: the password already set up encryption, and only the Mac can do it', async () => {
+  assert.equal((await call('/api/phone/connect', {}, { cookie:mac, remote:true })).status, 403);
+  const r = await call('/api/phone/connect', {}, { cookie:mac });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.connecting, true);
+  const relay = await import('../server/relay-client.js');
+  assert.equal(relay.settings().enabled, true);
+  assert.equal(relay.settings().url, 'http://127.0.0.1:9');
+  relay.configure({ enabled:false });
 });
 
 test('rejects foreign Host headers', async () => {
