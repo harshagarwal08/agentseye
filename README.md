@@ -8,10 +8,9 @@ Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Copilot, Aider, Amp, Qwen Code
 
 Forgot to lock your Mac? Do it from your phone. Let your agents keep working while you get on with your day.
 
-- **No admin access needed for basic setup.** No Homebrew or router configuration required with the default relay.
+- **No admin access needed.** No Homebrew, no router setup.
 - **Use your existing agent accounts.** No separate AI subscription needed for AgentsEye.
-- **Encrypted phone access.** The default relay carries end-to-end encrypted private requests and responses.
-- **Bring your own relay.** One command puts a private relay on your own free Cloudflare account. Or use Tailscale, Cloudflare Tunnel, or your own server. No shared infrastructure required.
+- **Your own private relay.** One tap puts a relay on your own free Cloudflare account. Nothing is shared with anyone else, and everything through it is end-to-end encrypted. Or use Tailscale, Cloudflare Tunnel, or your own server.
 - **Free and open source.** macOS, with an installable web app for your phone.
 
 **Most tested with Claude Code and Codex.** The other integrations are newer. Please [report](https://github.com/harshagarwal08/agentseye/issues) anything that doesn't work with your agent.
@@ -25,7 +24,7 @@ Forgot to lock your Mac? Do it from your phone. Let your agents keep working whi
 Think of it like a baby monitor for your coding agents.
 
 1. **A small app runs quietly on your Mac.** It watches your coding agents (Claude Code, Codex, Gemini and others): what they're working on, whether they're done, and whether they're stuck waiting for you.
-2. **Your phone connects to it through a secure "mailbox" on the internet** (we call it the relay). Your Mac and your phone both talk to the mailbox, so your phone can reach your Mac from anywhere: home, office, or a coffee shop. You don't need to set up your Wi-Fi or router.
+2. **Your phone connects to it through your own secure "mailbox" on the internet** (we call it the relay). It runs on your own free Cloudflare account, so it's yours alone. Your Mac and your phone both talk to the mailbox, so your phone can reach your Mac from anywhere: home, office, or a coffee shop. You don't need to set up your Wi-Fi or router.
 3. **Everything is locked before it leaves your Mac.** Messages are scrambled with a key made from your password, and only your Mac and your phone know that password. The mailbox passes the locked messages along but cannot read them.
 4. **When an agent needs you, your phone buzzes.** Tap it, see what the agent is asking, and answer. The agent carries on, and you never had to walk back to your desk.
 
@@ -65,7 +64,7 @@ You need a Mac with Claude Code or Codex already set up, an internet connection,
 Open Terminal and run:
 
 ~~~bash
-curl -fsSL https://agentseye.agentseye.workers.dev | sh
+curl -fsSL https://raw.githubusercontent.com/harshagarwal08/agentseye/master/install.sh | sh
 ~~~
 
 The installer downloads AgentsEye to **~/.agentseye/app**, installs a private copy of Node if needed, starts AgentsEye at login, and opens **http://localhost:4480**. Basic installation does not use sudo.
@@ -76,17 +75,11 @@ Choose a strong, unique AgentsEye password in the page opened on your Mac (http:
 
 ### 3. Connect your phone
 
-Tap **Connect my phone**. A QR code appears right there: scan it with your phone's camera and sign in with your password. That's it. (This uses the shared relay so you can try it right away.)
+Tap **Connect my phone**. A Terminal window opens and asks you to sign in to Cloudflare in the browser (a free account is enough; sign up there if you don't have one). It puts your private relay on *your* account in about a minute. Then a QR code appears on the Mac page: scan it with your phone's camera and sign in with your password.
 
 <img src="docs/images/connect.png" width="640" alt="Demo: the Mac page shows a QR code to scan with your phone">
 
-For everyday use, give yourself a private relay (free, about a minute):
-
-~~~bash
-agentseye relay deploy        # or: Settings → Phone access → Get your own relay → Set up
-~~~
-
-It signs you in to Cloudflare in the browser (a free account is enough), deploys the relay to *your* account, and switches this Mac over. Then scan the new QR code. See [all connection options](#connection-options).
+Same thing from Terminal: `agentseye relay deploy`. Rather not use Cloudflare? See [other connection options](#connection-options).
 
 The QR code is single-use and expires after 10 minutes. Signing in without a valid pairing code requires device approval on your Mac.
 
@@ -155,7 +148,7 @@ Keep-awake settings let the display sleep while the Mac stays awake. Closing the
 
 AgentsEye runs as your macOS user and uses your existing agent accounts. It can direct agents that edit files and run commands, so treat a signed-in phone as access to those capabilities.
 
-- **Local service:** listens on 127.0.0.1:4480. The default relay uses an outbound connection, without exposing a router port.
+- **Local service:** listens on 127.0.0.1:4480. The relay uses an outbound connection, without exposing a router port.
 - **Default relay encryption:** private requests and responses use AES-256-GCM. A per-Mac salt and 600,000 PBKDF2 iterations derive the key from your password. Captured requests are checked for replay and freshness.
 - **Device access:** password sign-in, device approval or QR pairing, revocable device sessions, and rate-limited sign-in attempts.
 - **Local storage:** settings and credentials live under ~/.agentseye with user-restricted permissions. The browser remembers its encryption key. These are not separately encrypted at rest by AgentsEye.
@@ -169,8 +162,7 @@ Pick whichever suits you in **Settings → Phone access**. You can change it any
 
 | Option | Setup | Good for |
 |---|---|---|
-| **Your own relay** (recommended) | `agentseye relay deploy`, free Cloudflare account | Everyone. Private, end-to-end encrypted, works on company Macs behind proxies, no daily limit. Redeploys itself when AgentsEye updates. |
-| **Shared relay** | Nothing, it's the default | Trying AgentsEye. End-to-end encrypted, but has a daily request limit per Mac. |
+| **Your own relay** (default) | **Connect my phone**, or `agentseye relay deploy`. Free Cloudflare account | Everyone. Private, end-to-end encrypted, works on company Macs behind proxies. Redeploys itself when AgentsEye updates. |
 | **Tailscale** | Tailscale on Mac and phone | Private tailnet access with a stable address. |
 | **Cloudflare Tunnel** | One tap, no account; installs cloudflared privately, no admin | A quick public HTTPS link. The address changes when it restarts. |
 | **Your own server** | `docker build -f relay/Dockerfile .` on any VPS, or `node relay/server.js` | Teams, or anyone who'd rather not use Cloudflare. See [relay/README.md](relay/README.md). |
@@ -193,7 +185,7 @@ Claude usage and token-limit alerts are disabled; usage remains visible in the a
 | The Mac appears offline | Wake it, check its network, and confirm AgentsEye is running. Keep awake does not normally prevent lid-close sleep. |
 | Claude requests do not appear | Install the approval hook, restart the Claude session, and check the “when away” setting. |
 | An agent shows but can't be typed into | Run `agentseye doctor`. Start it in Terminal or iTerm, or with `agentseye wrap <agent>` in any terminal. |
-| “This shared relay has carried today's share” | Run `agentseye relay deploy` for your own relay with no limit. |
+| Cloudflare sign-in fails (company proxy) | Use an API token: see [Connection options](#connection-options). |
 | Notifications do not arrive | Use the HTTPS phone link, allow notifications, and on iPhone launch from the Home Screen. Check which Mac most recently enabled notifications. |
 | The phone shows an older version | Close and reopen the app. Check the version at the bottom of Settings. |
 
@@ -202,7 +194,7 @@ Installed copies check for updates automatically. To reinstall or update manuall
 ### Uninstall
 
 ~~~bash
-curl -fsSL https://agentseye.agentseye.workers.dev | sh -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/harshagarwal08/agentseye/master/install.sh | sh -s -- --uninstall
 ~~~
 
 This removes the app and login service. Your settings remain in ~/.agentseye.

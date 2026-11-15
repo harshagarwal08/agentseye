@@ -12,8 +12,6 @@ const CHUNK = 192 * 1024;
 const HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'content-length']);
 const base32 = bytes => [...bytes].map(b => 'abcdefghijklmnopqrstuvwxyz234567'[b & 31]).join('');
 
-// The shared quick-start relay (daily limit per Mac). `agentseye relay deploy` gives anyone their own.
-export const DEFAULT_URL = process.env.AGENTSEYE_RELAY_URL || 'https://agentseye.agentseye.workers.dev';
 const state = { status:'off', error:'', socket:null, retries:0, timer:null, ping:null, port:PORT, heardAt:0 };
 
 export function settings() {

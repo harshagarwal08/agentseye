@@ -1,5 +1,5 @@
-// The one-line installer, served by the relay at /install.sh with the relay's own address filled in:
-//   curl -fsSL https://<relay> | sh   (or /install.sh)
+// The one-line installer. install.sh in the repo root is this with no relay (curl from GitHub; a test keeps it in
+// sync). A personal relay also serves it at /install.sh with its own address filled in: curl -fsSL https://<relay> | sh
 // Everything goes under ~/.agentseye. No sudo, no Homebrew: if Node 20+ is missing, a private copy is downloaded.
 export function installScript({ relay = '', repo = '' }) {
   return `#!/bin/sh

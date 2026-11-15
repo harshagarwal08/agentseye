@@ -111,3 +111,10 @@ test('own relay: a valid worker name, a minimal build, and the deployed address 
   assert.equal(own.deployedUrl(out, 'agentseye-test'), 'https://agentseye-test.someone.workers.dev');
   assert.equal(own.deployedUrl('nothing here', 'x'), '');
 });
+
+test('install.sh in the repo matches the installer and points at no relay', async () => {
+  const { installScript } = await import('../relay/install.js');
+  const file = fs.readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
+  assert.equal(file, installScript({ repo:'harshagarwal08/agentseye' }), 'regenerate install.sh from relay/install.js');
+  assert.match(file, /RELAY="\$\{AGENTSEYE_RELAY:-\}"/);
+});

@@ -62,7 +62,7 @@ if (command === 'start') {
   } else {
     const s = relay.status();
     const o = own.status();
-    console.log(s.url ? `Relay: ${s.url} (${s.enabled ? 'on' : 'off'})${o.configured && o.url === s.url ? ' · your own' : ' · shared'}` : 'Relay: off');
+    console.log(s.url ? `Relay: ${s.url} (${s.enabled ? 'on' : 'off'})${o.configured && o.url === s.url ? ' · your own' : ' · not yours'}` : 'Relay: off');
     if (o.configured) console.log(`Your own relay: ${o.url} · v${o.version}${o.outdated ? ' (redeploy pending)' : ''}`);
     else console.log('Get your own free relay: agentseye relay deploy');
     process.exit(0);
@@ -103,7 +103,7 @@ if (command === 'start') {
   console.log(`  ${ok(true)} Terminal.app · ${ok(true)} iTerm2 · ${ok(await terminal.tmuxBin())} tmux (any terminal app, VS Code / Cursor terminals)`);
   const s = relay.status();
   const o = own.status();
-  console.log(`\nPhone connection\n  ${s.url ? `${ok(s.enabled)} relay ${s.url}${o.configured && o.url === s.url ? ' (your own)' : ' (shared: run "agentseye relay deploy" for your own)'}` : `${ok(false)} relay off`}`);
+  console.log(`\nPhone connection\n  ${s.url ? `${ok(s.enabled)} relay ${s.url}${o.configured && o.url === s.url ? ' (your own)' : ' (not yours: run "agentseye relay deploy" for your own)'}` : `${ok(false)} relay off`}`);
   process.exit(0);
 } else if (command === 'update') {
   const result = await (await import('../server/updater.js')).update({ force:true });

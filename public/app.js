@@ -429,10 +429,13 @@ const loadSetup = async () => { setup = await api('/api/setup'); return setup; }
 function connectBlock(st, { inSettings = false } = {}) {
   if (st.phoneLink) return `<div class="connect"><img class="connect-qr" src="/api/pair/qr?ts=${Math.floor(Date.now() / 300000)}" alt="QR code that opens AgentsEye on your phone">
     <div class="grow"><b>Point your phone's camera here</b><div class="small muted">Open the link, sign in with your password. Works from anywhere, encrypted end to end.</div></div></div>`;
+  if (st.relayDeploying) return `<div class="connect"><div class="grow"><b><span class="spin"></span> Finish in the Terminal window</b>
+    <div class="small muted">Sign in to Cloudflare in the browser (a free account is enough). Your private relay is ready in about a minute, then a QR code appears here.</div>
+    <button class="small" data-connect>Open Terminal again</button></div></div>`;
   const connecting = st.relayEnabled && !st.relayError;
   return `<div class="connect"><div class="grow">${st.relayError ? `<div class="connection-error small">${esc(st.relayError)}</div>` : ''}
     <button class="primary" data-connect ${connecting ? 'disabled' : ''}>${connecting ? '<span class="spin"></span> Connecting…' : 'Connect my phone'}</button>
-    <div class="small muted">Free, nothing to install, encrypted end to end.${inSettings ? '' : ' <a href="#/settings">Other ways</a>'}</div></div></div>`;
+    <div class="small muted">${connecting ? '' : 'Sets up your own private relay on a free Cloudflare account, about a minute. '}Encrypted end to end.${inSettings ? '' : ' <a href="#/settings">Other ways</a>'}</div></div></div>`;
 }
 function bindConnect(root, after) {
   root.querySelector('[data-connect]')?.addEventListener('click', e => attempt(async () => {
@@ -443,9 +446,7 @@ function bindConnect(root, after) {
       if (!password) return;
       await api('/api/phone/connect', { password });
     }
-    e.target.disabled = true;
-    e.target.innerHTML = '<span class="spin"></span> Connecting…';
-    setTimeout(after, 1500);
+    setTimeout(after, 800);
   }));
 }
 function askPassword(title, detail) {
@@ -601,13 +602,13 @@ function relayRow(r, expanded = false) {
     ${me.local ? `<details class="relay-config" id="relay-config" ${expanded || !r.keyReady ? 'open' : ''}><summary>Relay settings</summary><div class="connection-fields">
       <label for="relay-url">Relay address</label><input id="relay-url" placeholder="https://your-relay.workers.dev" value="${esc(r.url)}" autocapitalize="off" autocorrect="off" inputmode="url">
       ${r.keyReady ? '' : '<label for="relay-pw">AgentsEye password</label><input id="relay-pw" type="password" placeholder="Set up encryption" autocomplete="current-password">'}
-      <div class="small muted">Use the default relay or enter your own address. Toggle access to apply changes.</div></div></details>` : ''}</div>`;
+      <div class="small muted">Your relay address. Toggle access to apply changes.</div></div></details>` : ''}</div>`;
 }
 // Everyone gets their own relay on their own free Cloudflare account, so nobody depends on a shared one.
 function ownRelayRow(s) {
   const o = s.ownRelay || {};
   if (o.configured && s.relay.url === o.url) return `<div class="item"><div class="grow"><div class="connection-title"><b>Your own relay</b><span class="chip green">Private</span></div><div class="s">${esc(o.name)} on your Cloudflare account.${o.outdated ? ' Updating it to this version…' : ''}${o.lastError ? ' Last update failed: run “agentseye relay deploy” in Terminal.' : ''}</div></div></div>`;
-  return `<div class="item own-relay"><div class="grow"><div class="connection-title"><b>Get your own relay</b><span class="chip">Free · recommended</span></div><div class="s">${s.sharedRelay ? 'You’re on a shared relay, which has a daily limit per Mac. ' : ''}Put a private relay on your own free Cloudflare account in about a minute. A Terminal window walks you through it.</div></div>
+  return `<div class="item own-relay"><div class="grow"><div class="connection-title"><b>Get your own relay</b><span class="chip">Free · recommended</span></div><div class="s">${s.sharedRelay ? 'You’re on a relay someone else runs. ' : ''}Put a private relay on your own free Cloudflare account in about a minute. A Terminal window walks you through it.</div></div>
     ${me.local ? '<button class="small primary" id="own-relay">Set up</button>' : '<span class="small muted">On the Mac</span>'}</div>`;
 }
 function bindRelayRow(root, r, after) {

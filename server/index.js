@@ -334,16 +334,17 @@ const routes = {
     if (b.enabled && !auth.relayKeyInfo()) throw fail('Enter your AgentsEye password once to turn on encryption for the relay.', 409);
     return relay.configure({ url:b.url, enabled:b.enabled });
   },
-  // One tap from the start guide / home: use whatever phone access is already on, else turn on the relay
-  // (the one this Mac was installed with, or the shared quick-start one).
+  // One tap from the start guide / home: use whatever phone access is already on, else turn on this Mac's relay,
+  // else put a relay on the person's own free Cloudflare account (there is no shared one).
   'POST /api/phone/connect':async (b, _, req) => {
     localOnly(req);
     if (b.password && !auth.checkPassword(String(b.password))) throw fail('Wrong password.', 401);
     if (b.password) auth.ensureRelayKey(String(b.password));
     if (phoneUrl()) return { ok:true, url:phoneUrl() };
     if (!auth.relayKeyInfo()) throw fail('Enter your AgentsEye password once to turn on encryption.', 409);
-    relay.configure({ url:relay.settings().url || relay.DEFAULT_URL, enabled:true });
-    return { ok:true, connecting:true };
+    if (relay.settings().url) { relay.configure({ enabled:true }); return { ok:true, connecting:true }; }
+    await openRelayDeploy();
+    return { ok:true, deploying:true };
   },
   'POST /api/tailscale':async (b, _, req) => { localOnly(req); return tailscale.setServing(Boolean(b.on)); },
   'POST /api/tailscale/open':async (_, __, req) => { localOnly(req); await run('/usr/bin/open', ['-a', 'Tailscale']).then(r => r.ok ? r : run('/usr/bin/open', ['https://tailscale.com/download/mac'])); return { ok:true }; },
@@ -365,7 +366,7 @@ const routes = {
     const [ts, pw, svc] = await Promise.all([tailscale.status(), power.status(), service.status()]);
     const devices = auth.listDevices();
     return {
-      phoneLink:Boolean(relay.link()) || ts.serving || tunnel.status().status === 'on', relay:relay.status().status, relayEnabled:relay.settings().enabled, relayError:relay.status().error,
+      phoneLink:Boolean(relay.link()) || ts.serving || tunnel.status().status === 'on', relay:relay.status().status, relayEnabled:relay.settings().enabled, relayError:relay.status().error, relayDeploying:relayDeploying(),
       tailscale:ts.state, tailscaleServing:Boolean(ts.serving), cloudflare:tunnel.status().status,
       phoneSignedIn:devices.some(d => d.remote && d.approved),
       homeScreen:devices.some(d => d.remote && d.approved && d.standalone),
@@ -394,14 +395,7 @@ const routes = {
     tunnel.install();
     return { ok:true };
   },
-  // Deploying needs a Cloudflare sign-in in the browser, so it runs in a Terminal window the person can see.
-  'POST /api/relay/own':async (_, __, req) => {
-    localOnly(req);
-    const bin = fileURLToPath(new URL('../bin/agentseye.js', import.meta.url));
-    const r = await terminal.openWindow(`${shellQuote(process.execPath)} ${shellQuote(bin)} relay deploy`);
-    if (!r.ok) throw fail(r.err || 'Could not open Terminal.', 500);
-    return { ok:true };
-  },
+  'POST /api/relay/own':async (_, __, req) => { localOnly(req); await openRelayDeploy(); return { ok:true }; },
   'GET /api/pair/qr':async (_, __, req) => {
     localOnly(req);
     const url = phoneUrl();
@@ -427,6 +421,15 @@ const routes = {
 
 const currentPairing = auth.pairingCode;
 // The link phones should use: the private Tailscale address if it is on, else the Cloudflare one.
+// Deploying needs a Cloudflare sign-in in the browser, so it runs in a Terminal window the person can see.
+let deployOpenedAt = 0;
+async function openRelayDeploy() {
+  const bin = fileURLToPath(new URL('../bin/agentseye.js', import.meta.url));
+  const r = await terminal.openWindow(`${shellQuote(process.execPath)} ${shellQuote(bin)} relay deploy`);
+  if (!r.ok) throw fail(r.err || 'Could not open Terminal.', 500);
+  deployOpenedAt = Date.now();
+}
+const relayDeploying = () => !relay.settings().url && Date.now() - deployOpenedAt < 15 * 60000;
 const phoneUrl = () => relay.link() || (tailscale.remoteHost() ? `https://${tailscale.remoteHost()}` : tunnel.status().url);
 const startOptions = b => ({ model:String(b.model || ''), skipPermissions:b.skipPermissions === true, name:String(b.name || ''), kind:String(b.kind || '') });
 
