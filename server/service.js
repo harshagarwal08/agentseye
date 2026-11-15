@@ -40,9 +40,18 @@ export async function load() {
   await run('/bin/launchctl', ['bootout', `${domain()}/dev.lookout.server`]);
   fs.rmSync(path.join(HOME, 'Library/LaunchAgents/dev.lookout.server.plist'), { force:true });
   await run('/bin/launchctl', ['bootout', `${domain()}/${LABEL}`]);
-  const r = await run('/bin/launchctl', ['bootstrap', domain(), plist()]);
-  if (!r.ok) throw Object.assign(new Error((r.stderr || 'launchctl failed').trim()), { status:500 });
+  // bootout returns before the old copy is gone; bootstrapping then fails with "5: Input/output error". Wait and retry.
+  let r;
+  for (let i = 0; i < 20; i++) {
+    if (!(await run('/bin/launchctl', ['print', `${domain()}/${LABEL}`])).ok) {
+      r = await run('/bin/launchctl', ['bootstrap', domain(), plist()]);
+      if (r.ok) return;
+    }
+    await sleep(500);
+  }
+  throw Object.assign(new Error(((r?.stderr || 'launchctl failed').trim()) + '\nRun: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.agentseye.server.plist'), { status:500 });
 }
+const sleep = ms => new Promise(ok => setTimeout(ok, ms));
 
 export async function uninstall() {
   await run('/bin/launchctl', ['bootout', `${domain()}/${LABEL}`]);
