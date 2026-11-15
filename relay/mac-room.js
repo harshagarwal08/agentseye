@@ -42,7 +42,24 @@ export class HibernatingMacRoom {
       const res = await this.env.ASSETS.fetch(new Request(`https://assets${name}`));
       return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
     };
-    return this.room.serve(request, { ip:request.headers.get('x-agentseye-ip') || '', macId:request.headers.get('x-agentseye-mac'), read, version:this.version });
+    return this.room.serve(request, { ip:request.headers.get('x-agentseye-ip') || '', macId:request.headers.get('x-agentseye-mac'), read, version:this.version, allow:() => this.allow() });
+  }
+
+  // A shared relay (MAC_DAILY_LIMIT set) gives each Mac a daily share of requests, so one busy phone can't use up
+  // the operator's free Cloudflare quota for everyone. Counted in memory, saved every 20 requests: a count lost to a
+  // restart only errs in the user's favour. Personal relays (no limit) skip all of this.
+  async allow() {
+    const limit = Number(this.env?.MAC_DAILY_LIMIT || 0);
+    // UNLIMITED_MACS: comma-separated Mac ids the operator exempts (set as a secret, e.g. your own Macs).
+    if (!limit || String(this.env?.UNLIMITED_MACS || '').split(',').map(s => s.trim()).includes(this.room.macId)) return true;
+    const day = new Date().toISOString().slice(0, 10);
+    if (this.usage?.day !== day) {
+      const stored = await this.state.storage.get('usage');
+      this.usage = stored?.day === day ? stored : { day, n:0 };
+    }
+    this.usage.n++;
+    if (this.usage.n % 20 === 0 || this.usage.n === limit + 1) await this.state.storage.put('usage', this.usage);
+    return this.usage.n <= limit;
   }
 
   async webSocketMessage(socket, data) {

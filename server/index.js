@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
 import { PORT, DATA, readJson, writeJson } from './paths.js';
-import { run } from './exec.js';
+import { run, shellQuote } from './exec.js';
 import * as auth from './auth.js';
 import * as system from './system.js';
 import * as updates from './updates.js';
@@ -30,6 +30,8 @@ import { recentFiles, safePath, mime } from './files.js';
 import { rename } from './names.js';
 import { usage, usageHistory } from './usage.js';
 import * as ides from './ides.js';
+import * as cli from './cli-agents.js';
+import * as ownRelay from './relay-deploy.js';
 import * as queue from './queue.js';
 import * as git from './git.js';
 import * as shares from './shares.js';
@@ -94,15 +96,22 @@ async function allAgents() {
   const local = (await agents.sessions({ limit:30 }))
     .filter(s => s.live && s.app !== 'T3 Code' && s.entrypoint !== 't3' && (s.entrypoint !== 'sdk-ts' || s.app))
     .map(s => ({ ...s, source:'local' }));
-  return [...t3.threads(), ...local, ...await ides.list().catch(() => [])];
+  // A Gemini or OpenCode chat whose CLI is running shows once, as the live (drivable) agent.
+  const liveCli = new Set(local.filter(s => s.harness === 'cli').map(s => `${s.kind}:${s.cwd}`));
+  const past = (await ides.list().catch(() => [])).filter(c => !liveCli.has(`${c.app}:${c.cwd}`));
+  return [...t3.threads(), ...local, ...past];
 }
 const updateCount = () => Object.values(updates.summary().sources).reduce((n, s) => n + (s.items?.length || 0), 0);
 
 async function sessionDelivery(session) {
-  if (!session.live) return { delivery:'resume', tty:'' };
-  const tty = session.pid ? await terminal.ttyOf(session.pid) : '';
-  if (tty && await terminal.inTerminal(tty)) return { delivery:'terminal', tty };
+  if (!session.live) return session.harness === 'cli' ? { delivery:'none', tty:'', note:'This agent has exited.' } : { delivery:'resume', tty:'' };
+  const tty = session.tty || (session.pid ? await terminal.ttyOf(session.pid) : '');
+  const host = tty ? await terminal.hostOf(tty) : '';
+  if (host) return { delivery:'terminal', tty, host:terminal.hostName(host), keys:terminal.keysFor(host) };
   const where = session.app && session.app !== 'Terminal' ? session.app : session.entrypoint === 'cli' ? 'another terminal app' : 'another app';
+  if (session.harness === 'cli' || session.entrypoint === 'cli') {
+    return { delivery:'none', tty, note:`Running in ${where}, which AgentsEye can't type into. Start it in Terminal or iTerm, or inside tmux in any terminal ("agentseye wrap ${session.kind ? cli.command(session.kind) : 'claude'}"), to control it from here.` };
+  }
   // Chats in an editor can't be typed into, but the same conversation can carry on in Terminal, where we can.
   const canMove = ['claude-vscode', 'codex-vscode'].includes(session.entrypoint);
   return { delivery:'none', tty, canMove, note:canMove ? `Open in ${where}. Sending moves this chat to Terminal on your Mac.` : `Open in ${where}. Reply from there.` };
@@ -112,7 +121,7 @@ async function sessionDelivery(session) {
 async function sendToSession(harness, id, text, move = false) {
   const session = await agents.findSession(harness, id);
   const { delivery, tty, note, canMove } = await sessionDelivery(session);
-  if (delivery === 'terminal') await terminal.sendText(tty, session.harness, text);
+  if (delivery === 'terminal') await terminal.sendText(tty, session.harness, text, session.pid);
   else if (delivery === 'resume' || (canMove && move)) await agents.resume(session.harness, session.id, session.cwd, text);
   else throw fail(note, 409);
   return delivery;
@@ -150,6 +159,7 @@ function cleanUploads() {
 async function agentFree(item) {
   if (item.kind === 't3') return !['busy', 'waiting'].includes(t3.threads().find(t => t.id === item.agentId)?.status);
   const s = await agents.findSession(item.harness, item.agentId);
+  if (s.harness === 'cli') return s.status !== 'busy';
   return !s.live || s.harness !== 'claude' || s.status === 'idle';
 }
 const deliverQueued = item => (item.kind === 't3' ? t3.sendMessage(item.agentId, item.text) : sendToSession(item.harness, item.agentId, item.text));
@@ -175,7 +185,7 @@ const routes = {
   'GET /api/badges':() => ({ version:appVersion(), needsYou:needsYou(), updates:updateCount(), devicesWaiting:pendingDevices().length }),
   'GET /api/home':async () => {
     const [list, limits] = await Promise.all([allAgents(), usage()]);
-    return { agents:list, limits, t3:t3.status(), t3Projects:t3.projects(), approvals:approvals.list().pending, devicesWaiting:pendingDevices(), host:os.hostname().replace(/\.local$/, ''), battery:await power.battery().catch(() => null), locked:(await power.screenLock().catch(() => ({}))).locked || false };
+    return { agents:list, limits, startable:await startable(), t3:t3.status(), t3Projects:t3.projects(), approvals:approvals.list().pending, devicesWaiting:pendingDevices(), host:os.hostname().replace(/\.local$/, ''), battery:await power.battery().catch(() => null), locked:(await power.screenLock().catch(() => ({}))).locked || false };
   },
 
   'GET /api/session':async (_, url) => {
@@ -190,14 +200,15 @@ const routes = {
       if (!sub) throw fail('Subagent not found.', 404);
       return { session, subagent:sub, messages:agents.transcript(harness, id, session.cwd, { agent }) };
     }
-    const { delivery, tty, note, canMove } = await sessionDelivery(session);
-    const out = { session, delivery, deliveryNote:note || '', canMove:Boolean(canMove), queued:queue.forAgent('local', id), approvals:approvals.list().pending.filter(p => p.sessionId === id) };
-    if (view === 'chat') out.messages = agents.transcript(harness, id, session.cwd);
+    const { delivery, tty, note, canMove, host, keys } = await sessionDelivery(session);
+    const out = { session, delivery, deliveryNote:note || '', canMove:Boolean(canMove), host:host || '', keys:keys || [], queued:queue.forAgent('local', id), approvals:approvals.list().pending.filter(p => p.sessionId === id) };
+    if (view === 'chat') out.messages = session.harness === 'cli' ? await cli.transcript(session) : agents.transcript(harness, id, session.cwd);
     if (view === 'helpers') out.helpers = session.subagents || [];
     if (view === 'terminal') {
       if (delivery === 'terminal') {
         const screen = await terminal.readScreen(tty, 80);
-        out.terminal = { tty, screen, choices:terminal.parseChoices(screen) };
+        out.terminal = { tty, screen, choices:terminal.parseChoices(screen), host, keys };
+        if (session.harness === 'cli' && session.status !== 'busy') session.status = terminal.screenStatus(screen);
       } else out.terminalNote = session.live ? note : 'This session is closed. Send a message from Chat to resume it in Terminal.';
     }
     if (view === 'files') out.files = recentFiles(session.cwd);
@@ -261,7 +272,7 @@ const routes = {
     const session = await agents.findSession(String(b.harness), String(b.id));
     const { delivery, tty, note } = await sessionDelivery(session);
     if (delivery !== 'terminal') throw fail(note || 'Not running in Terminal.', 409);
-    await terminal.sendKey(tty, session.harness, String(b.key));
+    await terminal.sendKey(tty, session.harness, String(b.key), session.pid);
     return { ok:true };
   },
   'POST /api/agents/start':async b => {
@@ -269,7 +280,7 @@ const routes = {
     if (started.id && b.name) rename(started.harness, started.id, b.name);
     return started;
   },
-  'GET /api/agents/new':(_, url) => agents.findNew(url.searchParams.get('harness'), url.searchParams.get('cwd') || '', Number(url.searchParams.get('since')) || 0, url.searchParams.get('id') || ''),
+  'GET /api/agents/new':(_, url) => agents.findNew(url.searchParams.get('harness'), url.searchParams.get('cwd') || '', Number(url.searchParams.get('since')) || 0, url.searchParams.get('id') || '', url.searchParams.get('ref') || ''),
   'GET /api/usage':(_, url) => usage({ force:url.searchParams.get('force') === '1' }),
   'GET /api/usage/history':() => usageHistory(),
 
@@ -310,7 +321,8 @@ const routes = {
     if (local && phoneUrl()) pairingAt = currentPairing().createdAt;
     return {
       version:updater.status(), tailscale:await tailscale.status(), power:await power.status(), phoneUrl:phoneUrl(), relay:{ ...relay.status(), keyReady:Boolean(auth.relayKeyInfo()) },
-      tunnel:{ ...tunnel.status(), status:installed ? tunnel.status().status : 'missing' }, installingCloudflared:updates.installing('cloudflared'), pairingAt,
+      tunnel:{ ...tunnel.status(), status:installed ? tunnel.status().status : 'missing' }, installingCloudflared:tunnel.isInstalling(), pairingAt,
+      ownRelay:ownRelay.status(), sharedRelay:Boolean(relay.status().url) && relay.status().url !== ownRelay.status().url,
       hook:hookStatus(), approvals:approvals.settings(), history:approvals.list().history, summary:summarySettings(),
       devices:auth.listDevices(), deviceId:device.id, host:os.hostname().replace(/\.local$/, ''),
     };
@@ -331,7 +343,7 @@ const routes = {
   'POST /api/session/stop':async b => {
     const session = await agents.findSession(String(b.harness), String(b.id));
     if (!session.live || !session.pid) throw fail('That session is not running.', 409);
-    await agents.stop(session.pid);
+    await agents.stop(session.pid, { verified:session.harness === 'cli' });
     return { ok:true };
   },
   'GET /api/preview':async () => ({ ...preview.status(), servers:preview.candidates(await system.ports()) }),
@@ -368,7 +380,15 @@ const routes = {
   'POST /api/tunnel':async (b, _, req) => { localOnly(req); return b.on ? tunnel.start() : tunnel.stop(); },
   'POST /api/tunnel/install':async (_, __, req) => {
     localOnly(req);
-    updates.brewInstall('cloudflared').then(job => { if (job.status === 'done') tunnel.start(); });
+    tunnel.install();
+    return { ok:true };
+  },
+  // Deploying needs a Cloudflare sign-in in the browser, so it runs in a Terminal window the person can see.
+  'POST /api/relay/own':async (_, __, req) => {
+    localOnly(req);
+    const bin = fileURLToPath(new URL('../bin/agentseye.js', import.meta.url));
+    const r = await terminal.openWindow(`${shellQuote(process.execPath)} ${shellQuote(bin)} relay deploy`);
+    if (!r.ok) throw fail(r.err || 'Could not open Terminal.', 500);
     return { ok:true };
   },
   'GET /api/pair/qr':async (_, __, req) => {
@@ -397,7 +417,18 @@ const routes = {
 const currentPairing = auth.pairingCode;
 // The link phones should use: the private Tailscale address if it is on, else the Cloudflare one.
 const phoneUrl = () => relay.link() || (tailscale.remoteHost() ? `https://${tailscale.remoteHost()}` : tunnel.status().url);
-const startOptions = b => ({ model:String(b.model || ''), skipPermissions:b.skipPermissions === true, name:String(b.name || '') });
+const startOptions = b => ({ model:String(b.model || ''), skipPermissions:b.skipPermissions === true, name:String(b.name || ''), kind:String(b.kind || '') });
+
+// Agents the phone can start on this Mac: Claude Code and Codex when installed, plus every other CLI found.
+let coreInstalled = { at:0, list:[] };
+async function startable() {
+  if (Date.now() - coreInstalled.at > 10 * 60000) {
+    const list = [];
+    for (const [harness, name] of [['claude', 'Claude Code'], ['codex', 'Codex']]) if ((await run('/usr/bin/which', [harness])).ok) list.push({ harness, name });
+    coreInstalled = { at:Date.now(), list };
+  }
+  return [...coreInstalled.list, ...(await cli.installed().catch(() => [])).map(k => ({ harness:'cli', kind:k.kind, name:k.name }))];
+}
 
 async function handleAuth(req, res, url) {
   const key = `${req.method} ${url.pathname}`;
@@ -594,6 +625,7 @@ export function main() {
   power.apply().catch(() => {});
   createServer().listen(PORT, '127.0.0.1', () => console.log(`AgentsEye running at http://localhost:${PORT}`));
   relay.boot(PORT);
+  ownRelay.boot();
   t3.boot();
   updater.boot();
   cleanUploads();

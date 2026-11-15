@@ -6,6 +6,7 @@ import { HOME } from './paths.js';
 import { safePath } from './files.js';
 import { openWindow } from './terminal.js';
 import { nameOf } from './names.js';
+import * as cli from './cli-agents.js';
 
 const claudeDir = () => path.join(HOME, '.claude');
 const codexDir = () => path.join(HOME, '.codex', 'sessions');
@@ -251,6 +252,8 @@ export async function sessions({ limit = 40 } = {}) {
     list.push({ harness:'claude', id, file, updatedAt:file ? fs.statSync(file).mtimeMs : live.startedAt || Date.now(), title:meta.aiTitle || meta.prompt || 'New session', cwd:meta.cwd || live.cwd, branch:meta.branch, live:true, pid:live.pid, status:live.status, entrypoint:live.entrypoint, subagents:file ? summary(claudeSubagents(file, true)) : undefined });
   }
   for (const s of list) { s.name = nameOf(s.harness, s.id); s.app = appOf(procs, s); }
+  // Every other terminal agent (Gemini, OpenCode, Cursor CLI, Aider…): live ones only.
+  for (const s of await cli.list().catch(() => [])) list.push({ ...s, name:nameOf('cli', s.id) });
   // Codex writes a new log file each time a conversation is resumed, all with the same id: keep one entry,
   // live if any of its files is open, with the newest activity.
   const merged = new Map();
@@ -349,6 +352,7 @@ export function transcript(harness, id, cwd, { agent = '', max = 200 } = {}) {
 
 // One session by id, whether or not it is in the recent list.
 export async function findSession(harness, id) {
+  if (harness === 'cli') { const s = await cli.find(id); return { ...s, name:nameOf('cli', s.id) }; }
   if (!ID.test(String(id))) throw Object.assign(new Error('Bad session id.'), { status:400 });
   const file = findFile(harness, id);
   const session = { harness, id, title:'(untitled)', cwd:'', branch:'', updatedAt:file ? fs.statSync(file).mtimeMs : Date.now(), live:false, name:nameOf(harness, id) };
@@ -418,6 +422,7 @@ export async function resume(harness, id, cwd, text = '') {
 export async function start(harness, cwd, prompt, opts = {}) {
   const dir = folder(cwd);
   const startedAt = Date.now();
+  if (harness === 'cli') return startCli(String(opts.kind || ''), dir, String(prompt || ''), startedAt);
   const flags = options(harness, opts);
   // A prompt that starts with "-" would be read as an option; "--" ends the options.
   const text = prompt ? ` ${String(prompt).startsWith('-') ? '-- ' : ''}${shellQuote(prompt)}` : '';
@@ -449,8 +454,30 @@ export async function fork(harness, id, cwd, text = '', opts = {}) {
   return { harness, id:null, cwd:dir, startedAt };
 }
 
+// Other terminal agents: open a Terminal window running the CLI. Ones without a prompt flag get the prompt typed in
+// once they are up. The window's tty is how the phone finds the new agent (findNew).
+async function startCli(kind, dir, prompt, startedAt) {
+  const r = await openWindow(`cd ${shellQuote(dir)} && ${cli.command(kind, prompt)}`);
+  if (!r.ok) throw fail(r.err || 'Could not open Terminal', 500);
+  if (prompt && cli.needsTypedPrompt(kind)) typeWhenReady(r.tty, prompt).catch(() => {});
+  return { harness:'cli', kind, id:null, ref:r.tty || '', cwd:dir, startedAt };
+}
+async function typeWhenReady(tty, prompt) {
+  const { sendText } = await import('./terminal.js');
+  for (const until = Date.now() + 30000; Date.now() < until;) {
+    await new Promise(r => setTimeout(r, 1000));
+    const a = await cli.onTty(tty);
+    if (a) { await new Promise(r => setTimeout(r, 2500)); return sendText(tty, 'cli', prompt, a.pid); }
+  }
+}
+
 // The session a start or fork created, once its CLI has written something.
-export async function findNew(harness, cwd, since, id) {
+export async function findNew(harness, cwd, since, id, ref = '') {
+  if (harness === 'cli') {
+    if (!/^\/dev\/ttys\d+$/.test(String(ref))) throw fail('Bad terminal.');
+    const a = await cli.onTty(ref);
+    return { id:a ? `${a.kind}.${a.pid}` : null };
+  }
   if (harness === 'claude') {
     if (!ID.test(String(id))) throw fail('Bad session id.');
     const live = claudeLive().get(id);
@@ -466,10 +493,11 @@ export async function findNew(harness, cwd, since, id) {
 }
 
 // Ends a running agent: a polite SIGTERM first (it saves its transcript), SIGKILL if it is still there after 4 s.
-export async function stop(pid) {
+// verified: the caller already matched the process to a known terminal agent (cli-agents.js).
+export async function stop(pid, { verified = false } = {}) {
   if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) throw fail('Bad process.');
   const ps = await run('/bin/ps', ['-o', 'comm=', '-p', String(pid)]);
-  if (!['claude', 'codex', 'node'].includes(path.basename(ps.stdout.trim()))) throw fail('That process is not an agent.', 409);
+  if (!verified && !['claude', 'codex', 'node'].includes(path.basename(ps.stdout.trim()))) throw fail('That process is not an agent.', 409);
   try { process.kill(pid, 'SIGTERM'); } catch { return; }
   setTimeout(() => { if (alive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} } }, 4000).unref();
 }

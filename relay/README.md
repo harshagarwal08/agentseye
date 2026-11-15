@@ -17,7 +17,27 @@ phone app updates.
 **Trust note.** Because the relay serves the app's code, a relay operator could in principle change it to capture
 your password. Use this relay, one your team runs, or your own (it's free).
 
-## Deploy to Cloudflare (free)
+## Your own relay in one command (recommended)
+
+On a Mac with AgentsEye installed:
+
+```bash
+agentseye relay deploy
+```
+
+It copies the relay and the phone app into `~/.agentseye/relay-build`, signs you in to Cloudflare if needed (free
+account), deploys a Worker named `agentseye-<your Mac id>` to **your** account, and switches the Mac over. When
+AgentsEye updates, the relay is redeployed in the background so phones get the matching app. Behind a proxy where the
+browser sign-in fails, use an API token: `CLOUDFLARE_API_TOKEN=<token> agentseye relay deploy`.
+
+## Running a shared relay for others
+
+Set `MAC_DAILY_LIMIT` (see `wrangler.toml`) to give each Mac a daily share of requests, so one busy phone can't use up
+your free Cloudflare quota for everyone. Over the limit, phones get a message pointing them to `agentseye relay deploy`,
+and the landing page says it's a shared relay. Exempt your own Macs with a secret:
+`npx wrangler secret put UNLIMITED_MACS` (comma-separated Mac ids from `~/.agentseye/relay.json`).
+
+## Deploy to Cloudflare by hand
 
 To distribute your own fork, set `REPO` in `relay/wrangler.toml` to your GitHub `owner/repository` before deploying. Otherwise the installer downloads the default AgentsEye repository. Choose a unique Worker name if needed.
 
@@ -35,6 +55,13 @@ else can claim that id afterwards. WebSocket hibernation keeps idle connections 
 in memory. Heartbeat pings receive automatic replies without waking it; authenticated socket attachments restore
 the connection after hibernation. Active phone requests still use compute duration. An existing daily quota block
 is not reset by deploying a fix; it clears at Cloudflare’s next daily reset.
+
+## Or self-host with Docker
+
+```bash
+docker build -f relay/Dockerfile -t agentseye-relay .      # from the repository root
+docker run -d -p 8787:8787 -v agentseye-relay:/data -e TRUST_PROXY=1 agentseye-relay
+```
 
 ## Or self-host on any Node server
 

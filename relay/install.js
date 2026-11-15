@@ -15,6 +15,7 @@ say() { printf '\\033[1;31m●\\033[0m %s\\n' "$1"; }
 if [ "\${1:-}" = "--uninstall" ]; then
   launchctl bootout "gui/$(id -u)/dev.agentseye.server" 2>/dev/null || true
   rm -f "$HOME/Library/LaunchAgents/dev.agentseye.server.plist"
+  grep -q 'agentseye.js' "$HOME/.local/bin/agentseye" 2>/dev/null && rm -f "$HOME/.local/bin/agentseye"
   rm -rf "$APP" "$HOME_DIR/node"
   say "AgentsEye removed. Your settings are still in $HOME_DIR (delete it to forget everything)."
   exit 0
@@ -43,12 +44,18 @@ curl -fsSL "\${AGENTSEYE_TARBALL:-https://codeload.github.com/$REPO/tar.gz/HEAD}
 rm -rf "$APP.old"; [ -d "$APP" ] && mv "$APP" "$APP.old"; mv "$TMP" "$APP"; rm -rf "$APP.old"
 printf '{"repo":"%s"}\\n' "$REPO" > "$HOME_DIR/install.json"
 
-[ -n "$RELAY" ] && "$NODE" "$APP/bin/agentseye.js" set-relay "$RELAY"
+# An \`agentseye\` command (relay deploy, doctor, wrap…), in ~/.local/bin so no admin rights are needed.
+mkdir -p "$HOME/.local/bin"
+printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$NODE" "$APP/bin/agentseye.js" > "$HOME/.local/bin/agentseye" && chmod +x "$HOME/.local/bin/agentseye"
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) say "Add ~/.local/bin to your PATH to use the agentseye command (or run $HOME/.local/bin/agentseye)." ;; esac
+
+[ -n "$RELAY" ] && AGENTSEYE_SKIP_RESTART=1 "$NODE" "$APP/bin/agentseye.js" set-relay "$RELAY"
 if [ -n "\${AGENTSEYE_SKIP_SERVICE:-}" ]; then say "Installed (service skipped)."; exit 0; fi
 "$NODE" "$APP/bin/agentseye.js" install-service
 sleep 2
 say "AgentsEye is running and starts at login."
 say "Opening http://localhost:4480 — choose a password, then scan the QR code with your phone."
+say "Tip: run 'agentseye relay deploy' for your own private relay (free), and 'agentseye doctor' to see every agent it can reach."
 open "http://localhost:4480" 2>/dev/null || true
 `;
 }

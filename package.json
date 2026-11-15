@@ -1,7 +1,7 @@
 {
   "name": "agentseye",
-  "version": "0.7.9",
-  "description": "Your coding agents, in your pocket: see and control Claude Code and Codex on your Mac from your phone. End-to-end encrypted, works on company Macs.",
+  "version": "0.8.0",
+  "description": "Watch and drive every coding agent on your Mac from your phone: Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Copilot, Aider and more. End-to-end encrypted, bring your own relay.",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -22,14 +22,22 @@
     "ws": "^8.22.0"
   },
   "keywords": [
-    "claude-code",
-    "codex",
     "ai-agents",
-    "remote",
+    "aider",
+    "claude-code",
+    "cloudflare-workers",
+    "codex",
+    "copilot",
+    "cursor",
+    "developer-tools",
+    "gemini-cli",
+    "iterm2",
+    "macos",
+    "opencode",
     "phone",
     "pwa",
-    "macos",
-    "developer-tools"
+    "remote",
+    "tmux"
   ],
   "os": [
     "darwin"
@@ -41,6 +49,10 @@
     "hooks",
     "relay/core.js",
     "relay/install.js",
+    "relay/worker.js",
+    "relay/mac-room.js",
+    "relay/server.js",
+    "relay/package.json",
     "README.md",
     "LICENSE"
   ],

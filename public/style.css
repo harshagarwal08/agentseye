@@ -498,3 +498,7 @@ button.primary.busy::after, button.good.busy::after, .send.busy::after { border-
 .lock-btn { width:100%; min-height:50px; font-size:16px; font-weight:700; }
 .mc-lock { display:flex; align-items:center; justify-content:center; gap:8px; min-height:50px; border-radius:12px; background:color-mix(in srgb, var(--green) 16%, var(--card)); color:var(--green); font-weight:700; font-size:16px; }
 .mc-lock span { font-weight:500; font-size:13px; opacity:.85; }
+/* Agent picker with many CLIs: wrap instead of scrolling sideways. */
+.seg.wrap { flex-wrap:wrap; }
+.seg.wrap button { flex:1 0 auto; }
+.own-relay .chip { margin-left:6px; }

@@ -2,18 +2,19 @@
 
 # AgentsEye
 
-**Your coding agents, in your pocket.**
+**Every coding agent on your Mac, in your pocket.**
 
-Check what your agents are doing, reply to supported chats, review changes, and respond when they need you. From your phone, while everything keeps running on your Mac.
+Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Copilot, Aider, Amp, Qwen Code and more. See what they're doing, answer when they need you, type into their terminal, approve requests, review changes. From your phone, while everything keeps running on your Mac.
 
 Forgot to lock your Mac? Do it from your phone. Let your agents keep working while you get on with your day.
 
 - **No admin access needed for basic setup.** No Homebrew or router configuration required with the default relay.
 - **Use your existing agent accounts.** No separate AI subscription needed for AgentsEye.
 - **Encrypted phone access.** The default relay carries end-to-end encrypted private requests and responses.
+- **Bring your own relay.** One command puts a private relay on your own free Cloudflare account. Or use Tailscale, Cloudflare Tunnel, or your own server. No shared infrastructure required.
 - **Free and open source.** macOS, with an installable web app for your phone.
 
-**Tested with Claude Code and Codex only.** Other integrations are included but still need testing. Capabilities vary by integration.
+**Most tested with Claude Code and Codex.** The other integrations are newer. Please [report](https://github.com/harshagarwal08/agentseye/issues) anything that doesn't work with your agent.
 
 [Get started](#get-started) · [Walkthrough](#walkthrough) · [Security](#security-and-data) · [Contribute](#contribute)
 
@@ -52,7 +53,15 @@ Choose a strong, unique AgentsEye password in the page opened on your Mac. You w
 
 ### 3. Connect your phone
 
-On your Mac, open **Settings → Phone access**. The installer configures the default relay. Check that it shows **Connected**, then scan the QR code with your phone's camera and sign in.
+The installer starts you on the shared relay, so you can try it right away. On your Mac, open **Settings → Phone access**, check it shows **Connected**, then scan the QR code with your phone's camera and sign in.
+
+For everyday use, give yourself a private relay (free, about a minute):
+
+~~~bash
+agentseye relay deploy        # or: Settings → Phone access → Get your own relay → Set up
+~~~
+
+It signs you in to Cloudflare in the browser (a free account is enough), deploys the relay to *your* account, and switches this Mac over. Then scan the new QR code. See [all connection options](#connection-options).
 
 The QR code is single-use and expires after 10 minutes. Signing in without a valid pairing code requires device approval on your Mac.
 
@@ -87,19 +96,31 @@ Start an agent on your Mac, then open **Agents** on your phone. The **Start guid
 
 ## Supported agents
 
-Personal testing so far covers **Claude Code and Codex only**. Included integrations are not all equally tested or equally capable.
+AgentsEye finds agents two ways: by reading their chat logs, and by finding their process and the terminal it runs in. Any agent in **Terminal.app, iTerm2, or tmux** (in any terminal app, including VS Code's and Cursor's built-in terminals, Ghostty, Warp, kitty…) can be watched live and typed into from your phone.
 
-| Integration | Read chats | Reply or control | Requests and notifications |
+| Agent | See it | Reply / control from phone | Alerts |
 |---|---|---|---|
-| T3 Code with Claude or Codex | Yes | Messages appear in T3 Code too | Supported questions; done, waiting, and failed alerts |
-| Claude Code in Terminal | Yes | Reply through its Terminal tab | Permission and question hook; waiting and done alerts |
-| Claude Code in VS Code | Yes | Sending can move the chat to Terminal | Claude hook for sessions started after setup |
-| Codex CLI | Yes | Reply through its Terminal tab | Interactive menus through the Terminal tab |
-| Cursor | Yes, read-only | Open on Mac | Waiting and done alerts |
-| GitHub Copilot in VS Code | Yes, read-only | Open on Mac | Done alerts |
-| Gemini CLI | Yes, read-only | Not supported | Not supported |
+| Claude Code (Terminal, iTerm, tmux) | Chat + live terminal | Yes | Permission prompts and questions via hook; waiting, done, stuck |
+| Claude Code in VS Code / Cursor extension | Chat | Sending moves the chat to Terminal | Hook for sessions started after setup |
+| Codex CLI | Chat + live terminal | Yes, including its menus | Done, waiting |
+| T3 Code (Claude or Codex) | Chat | Yes, appears in T3 Code too | Questions; done, waiting, failed |
+| Gemini CLI | Chat + live terminal | Yes, in a terminal it can reach | Needs you, done |
+| OpenCode | Chat + live terminal | Yes, in a terminal it can reach | Needs you, done |
+| Cursor CLI, Copilot CLI, Qwen Code, Amp, Aider, Goose, Crush, Droid, Kiro CLI, Auggie, Kimi CLI | Live terminal | Yes, in a terminal it can reach | Needs you, done (read from the screen) |
+| Cursor (editor chat) | Chat | Read only, open on Mac | Waiting, done |
+| GitHub Copilot in VS Code | Chat | Read only, open on Mac | Done |
 
-Claude's permission hook is specific to Claude. Codex does not use that same approval flow. macOS may request Automation permission when controlling Terminal.
+**Start any of them from your phone:** the **+** button lists every agent CLI installed on your Mac and opens it in a Terminal window in the folder you choose, with your first message.
+
+**Running an agent somewhere AgentsEye can't type into** (Ghostty, Warp, the VS Code terminal)? Run it inside tmux. `agentseye wrap` does that for you:
+
+~~~bash
+agentseye wrap gemini        # any agent: wrap opencode, wrap aider, wrap claude…
+~~~
+
+`agentseye doctor` shows which agents are installed, which are running, and whether each one can be controlled.
+
+Claude's permission hook is specific to Claude. macOS asks once for Automation permission the first time AgentsEye controls Terminal or iTerm.
 
 ## Locking and keeping the Mac awake
 
@@ -119,11 +140,21 @@ AgentsEye runs as your macOS user and uses your existing agent accounts. It can 
 - **Updates:** installed copies download newer versions from the configured GitHub repository. Updates currently trust that repository without separately signed releases.
 - **Notifications:** Web Push delivers short alerts that may include chat names or question previews. Adjust lock-screen previews on your phone if needed.
 
-### Other connection options
+## Connection options
 
-**Settings → Phone access → Other connection options** includes Tailscale and Cloudflare Tunnel. Tailscale provides access within your tailnet. Cloudflare Tunnel provides a public HTTPS endpoint; quick-tunnel addresses can change after a restart. These options use their own transport protections rather than the default relay's application-level encryption.
+Pick whichever suits you in **Settings → Phone access**. You can change it any time; phones just scan the new QR code.
 
-You can also [host your own relay](relay/README.md).
+| Option | Setup | Good for |
+|---|---|---|
+| **Your own relay** (recommended) | `agentseye relay deploy`, free Cloudflare account | Everyone. Private, end-to-end encrypted, works on company Macs behind proxies, no daily limit. Redeploys itself when AgentsEye updates. |
+| **Shared relay** | Nothing, it's the default | Trying AgentsEye. End-to-end encrypted, but has a daily request limit per Mac. |
+| **Tailscale** | Tailscale on Mac and phone | Private tailnet access with a stable address. |
+| **Cloudflare Tunnel** | One tap, no account; installs cloudflared privately, no admin | A quick public HTTPS link. The address changes when it restarts. |
+| **Your own server** | `docker build -f relay/Dockerfile .` on any VPS, or `node relay/server.js` | Teams, or anyone who'd rather not use Cloudflare. See [relay/README.md](relay/README.md). |
+
+Behind a company proxy where Cloudflare's browser sign-in fails? Create an API token (Cloudflare dashboard → My Profile → API Tokens → "Edit Cloudflare Workers" template) and run `CLOUDFLARE_API_TOKEN=<token> agentseye relay deploy`.
+
+Tailscale and Cloudflare Tunnel use their own transport protections rather than the relay's application-level encryption.
 
 ## Notification behavior
 
@@ -138,6 +169,8 @@ Claude usage and token-limit alerts are disabled; usage remains visible in the a
 | “Waiting for your Mac” | Approve the phone under Settings → Devices on your Mac, or sign in using a fresh pairing QR code. |
 | The Mac appears offline | Wake it, check its network, and confirm AgentsEye is running. Keep awake does not normally prevent lid-close sleep. |
 | Claude requests do not appear | Install the approval hook, restart the Claude session, and check the “when away” setting. |
+| An agent shows but can't be typed into | Run `agentseye doctor`. Start it in Terminal or iTerm, or with `agentseye wrap <agent>` in any terminal. |
+| “This shared relay has carried today's share” | Run `agentseye relay deploy` for your own relay with no limit. |
 | Notifications do not arrive | Use the HTTPS phone link, allow notifications, and on iPhone launch from the Home Screen. Check which Mac most recently enabled notifications. |
 | The phone shows an older version | Close and reopen the app. Check the version at the bottom of Settings. |
 
@@ -150,6 +183,20 @@ curl -fsSL https://agentseye.agentseye.workers.dev | sh -s -- --uninstall
 ~~~
 
 This removes the app and login service. Your settings remain in ~/.agentseye.
+
+## Command line
+
+~~~
+agentseye doctor                which agents and connections AgentsEye can see
+agentseye relay deploy          your own free relay on your Cloudflare account
+agentseye relay status          which relay this Mac uses
+agentseye set-relay <url>       use a relay you host
+agentseye wrap <agent> [args]   run any agent CLI in tmux so your phone can drive it from any terminal app
+agentseye install-hook          send Claude Code permission prompts to your phone
+agentseye update                update now (also automatic)
+~~~
+
+If `agentseye` isn't on your PATH: `~/.agentseye/node/bin/node ~/.agentseye/app/bin/agentseye.js <command>` (or `node ~/.agentseye/app/bin/agentseye.js`).
 
 ## Develop
 
@@ -179,7 +226,7 @@ Found a bug, want a new integration, or have a better way to do something? Issue
 - Describe the integration, macOS version, and steps to reproduce a bug.
 - Include relevant test results for code changes.
 - Use fictional data in screenshots and videos. Do not upload passwords, access links, tokens, or private conversations.
-- Help test integrations beyond Claude Code and Codex.
+- Help test integrations beyond Claude Code and Codex. Adding a terminal agent is usually one line in `server/cli-agents.js`.
 
 Add something, fix something, or make it nicer. Contributions are welcome.
 

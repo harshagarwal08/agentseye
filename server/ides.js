@@ -1,10 +1,14 @@
 // Chats from editors with their own agents: Cursor and VS Code (GitHub Copilot). Neither offers a way for
 // another app to send them messages, so these are read only: you can follow them, and get a ping when they finish.
+// Also past Gemini CLI and OpenCode chats; while those CLIs are running they are listed (and drivable) through
+// cli-agents.js instead.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { HOME } from './paths.js';
+import { sqliteJson, sqlQuote } from './sqlite.js';
+import * as opencode from './opencode.js';
 
 const run = promisify(execFile);
 const support = path.join(HOME, 'Library', 'Application Support');
@@ -16,16 +20,8 @@ const mtime = file => { try { return fs.statSync(file).mtimeMs; } catch { return
 
 // Cursor keeps everything in one SQLite file. Read it with the sqlite3 that ships with macOS, read only.
 // If Cursor holds a write lock, fall back to a snapshot read rather than wait.
-async function sql(query) {
-  for (const uri of [`file:${cursorDb}?mode=ro`, `file:${cursorDb}?immutable=1`]) {
-    try {
-      const { stdout } = await run('/usr/bin/sqlite3', ['-readonly', '-json', uri, query], { maxBuffer:64 * 1024 * 1024, timeout:15000 });
-      return stdout.trim() ? JSON.parse(stdout) : [];
-    } catch {}
-  }
-  return [];
-}
-const quote = s => `'${String(s).replace(/'/g, "''")}'`;
+const sql = query => sqliteJson(cursorDb, query);
+const quote = sqlQuote;
 
 // The file is large and Cursor writes to it constantly while working, so scan it at most every 10 seconds.
 let cursorCache = { at:0, checked:0, list:[] };
@@ -174,12 +170,25 @@ function geminiList() {
   return list;
 }
 
+// The Gemini chat a running `gemini` in this folder is writing: the newest one there.
+export function geminiLatestIn(cwd) {
+  const found = geminiFiles().find(f => f.cwd && f.cwd === cwd);
+  if (!found) return null;
+  const chat = readGemini(found.file);
+  const first = chat.messages.find(m => m.role === 'user');
+  return { title:first ? first.text.split('\n')[0].slice(0, 80) : '', messages:chat.messages.slice(-200),
+    status:Date.now() - found.at < 60000 && chat.messages.at(-1)?.role === 'user' ? 'busy' : 'done' };
+}
+
+const recentOpencode = async () => (await opencode.list().catch(() => [])).filter(c => c.status === 'busy' || c.updatedAt > Date.now() - RECENT).slice(0, PER_APP);
+
 export async function list() {
   const cursor = (await cursorList().catch(() => [])).filter(c => c.status === 'busy' || c.updatedAt > Date.now() - RECENT).slice(0, PER_APP);
-  return [...cursor, ...copilotList(), ...geminiList()].map(({ file, ...c }) => c);
+  return [...cursor, ...copilotList(), ...geminiList(), ...await recentOpencode()].map(({ file, ...c }) => c);
 }
 
 export async function thread(app, id) {
+  if (app === 'opencode') return opencode.thread(id);
   if (app === 'gemini') {
     const found = geminiFiles().find(f => path.basename(f.file, '.jsonl') === id);
     if (!found) throw Object.assign(new Error('That Gemini chat is gone.'), { status:404 });
@@ -208,7 +217,7 @@ export async function thread(app, id) {
 
 // Bring the chat's app to the front on the Mac, in its project folder when known.
 export async function open(app, id) {
-  if (app === 'gemini') throw Object.assign(new Error('Gemini CLI runs in a terminal; open it there.'), { status:400 });
+  if (app === 'gemini' || app === 'opencode') throw Object.assign(new Error('This agent runs in a terminal; open it there.'), { status:400 });
   const name = { cursor:'Cursor', vscode:'Visual Studio Code' }[app];
   if (!name) throw Object.assign(new Error('Unknown app.'), { status:400 });
   const cwd = app === 'vscode' ? copilotList().find(c => c.id === id)?.cwd : '';

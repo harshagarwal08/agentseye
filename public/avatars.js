@@ -1,5 +1,5 @@
 // Pixel mascots drawn from character grids: one per harness, with a prop for its mood.
-const palette = { O:'#d97757', o:'#b85f43', K:'#2b2620', D:'#3b3f46', d:'#2a2d33', T:'#7dd3c0', A:'#9aa0a8', W:'#fffdf8', R:'#c0443a', L:'#8a8f98', S:'#c9c2b4', C:'#7a5a3a', Y:'#f2c46d', P:'#8957e5', p:'#6e40c9', G:'#e9e6df' };
+const palette = { B:'#4285f4', b:'#2a5db0', N:'#1f1f1f', n:'#3a3a3a', E:'#34a853', O:'#d97757', o:'#b85f43', K:'#2b2620', D:'#3b3f46', d:'#2a2d33', T:'#7dd3c0', A:'#9aa0a8', W:'#fffdf8', R:'#c0443a', L:'#8a8f98', S:'#c9c2b4', C:'#7a5a3a', Y:'#f2c46d', P:'#8957e5', p:'#6e40c9', G:'#e9e6df' };
 
 const bodies = {
   claude:[
@@ -50,6 +50,43 @@ const bodies = {
     '....P......P....',
     '....P......P....',
   ],
+  gemini:[
+    '.......B........',
+    '......BBB.......',
+    '...BBBBBBBBBB...',
+    '...BbbbbbbbbB...',
+    '...BbWWbbWWbB...',
+    '...BbbbbbbbbB...',
+    '...BBBBBBBBBB...',
+    '......BBB.......',
+    '....B......B....',
+    '....B......B....',
+  ],
+  opencode:[
+    '................',
+    '...NNNNNNNNNN...',
+    '...NnnnnnnnnN...',
+    '...NnGGnnGGnN...',
+    '...NnGGnnGGnN...',
+    '...NnnnnnnnnN...',
+    '...NnnGGGGnnN...',
+    '...NNNNNNNNNN...',
+    '....N......N....',
+    '....N......N....',
+  ],
+  // Any other terminal agent: a little green-screen terminal.
+  terminal:[
+    '................',
+    '..DDDDDDDDDDDD..',
+    '..DddddddddddD..',
+    '..DdEddddddddD..',
+    '..DddEdddddddD..',
+    '..DdEddEEEdddD..',
+    '..DddddddddddD..',
+    '..DDDDDDDDDDDD..',
+    '.....D....D.....',
+    '.....D....D.....',
+  ],
 };
 const props = {
   waiting:[[14, 0, 'R'], [14, 1, 'R'], [14, 2, 'R'], [14, 4, 'R']],
@@ -59,7 +96,7 @@ const props = {
 const mood = status => ({ waiting:'waiting', busy:'busy', idle:'open', open:'open' })[status] || (status === 'off' ? 'off' : 'open');
 
 export function avatar(harness, status) {
-  const grid = bodies[harness] || bodies.codex;
+  const grid = bodies[harness] || bodies[String(harness).replace(/-cli$/, '')] || bodies.terminal;
   const m = mood(status);
   const rects = [];
   grid.forEach((row, y) => [...row].forEach((ch, x) => { if (palette[ch]) rects.push(`<rect x="${x}" y="${y}" width="1" height="1" fill="${palette[ch]}"/>`); }));

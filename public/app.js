@@ -12,7 +12,10 @@ const base = p => String(p || '').split('/').filter(Boolean).pop() || '~';
 const folder = p => { const n = base(p); const t = n.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/(-[0-9a-f]{4,})+(-[0-9a-z]{1,3})?$/i, ''); return t === n ? n : t.replace(/-/g, ' '); };
 const pct = (a, b) => (b ? Math.round(a / b * 100) : 0);
 const level = p => (p > 90 ? 'bad' : p > 75 ? 'warn' : '');
-const harnessName = { claude:'Claude Code', codex:'Codex', cursor:'Cursor', copilot:'Copilot' };
+const harnessName = { claude:'Claude Code', codex:'Codex', cursor:'Cursor', copilot:'Copilot', gemini:'Gemini CLI', opencode:'OpenCode', 'cursor-cli':'Cursor CLI', 'copilot-cli':'Copilot CLI', qwen:'Qwen Code', amp:'Amp', aider:'Aider', goose:'Goose', crush:'Crush', droid:'Droid', kiro:'Kiro CLI', auggie:'Auggie', kimi:'Kimi CLI' };
+// Terminal agents (harness "cli") are told apart by their kind: gemini, opencode, aider…
+const agentKey = a => (a?.harness === 'cli' ? a.kind : a?.harness) || '';
+const agentName = a => harnessName[agentKey(a)] || a?.kindName || agentKey(a) || 'agent';
 // What a session is called: the name you gave it, else Claude's AI title or the first prompt.
 const display = s => s.name || s.title || '(untitled)';
 const where = s => [folder(s.cwd), s.branch && s.branch !== 'HEAD' ? s.branch : ''].filter(Boolean).join(' · ');
@@ -537,11 +540,11 @@ function optionsSheet(done) {
 
 // Starting takes a few seconds (the Mac opens Terminal and the shell loads); wait for the session, then open it.
 function openWhenReady(started, name) {
-  sheet(`<h3>Starting ${esc(harnessName[started.harness])}…</h3><p class="small muted">A Terminal window is opening on your Mac in ${esc(base(started.cwd))}. This page opens the session as soon as it appears.</p><div class="row"><span class="dot amber"></span><span class="grow small muted" id="wait-note">Waiting for the agent</span></div><button class="ghost" data-close>Keep browsing</button>`);
+  sheet(`<h3>Starting ${esc(agentName(started))}…</h3><p class="small muted">A Terminal window is opening on your Mac in ${esc(base(started.cwd))}. This page opens the session as soon as it appears.</p><div class="row"><span class="dot amber"></span><span class="grow small muted" id="wait-note">Waiting for the agent</span></div><button class="ghost" data-close>Keep browsing</button>`);
   let tries = 0;
   const tick = async () => {
     if ($('#sheet').hidden) return;
-    const q = new URLSearchParams({ harness:started.harness, cwd:started.cwd, since:started.startedAt, id:started.id || '' });
+    const q = new URLSearchParams({ harness:started.harness, cwd:started.cwd, since:started.startedAt, id:started.id || '', ref:started.ref || '' });
     const r = await api(`/api/agents/new?${q}`).catch(() => ({}));
     if (r.id) {
       if (name && !started.id) await api('/api/session/rename', { harness:started.harness, id:r.id, name }).catch(() => {});
@@ -566,6 +569,13 @@ function relayRow(r, expanded = false) {
       <label for="relay-url">Relay address</label><input id="relay-url" placeholder="https://your-relay.workers.dev" value="${esc(r.url)}" autocapitalize="off" autocorrect="off" inputmode="url">
       ${r.keyReady ? '' : '<label for="relay-pw">AgentsEye password</label><input id="relay-pw" type="password" placeholder="Set up encryption" autocomplete="current-password">'}
       <div class="small muted">Use the default relay or enter your own address. Toggle access to apply changes.</div></div></details>` : ''}</div>`;
+}
+// Everyone gets their own relay on their own free Cloudflare account, so nobody depends on a shared one.
+function ownRelayRow(s) {
+  const o = s.ownRelay || {};
+  if (o.configured && s.relay.url === o.url) return `<div class="item"><div class="grow"><div class="connection-title"><b>Your own relay</b><span class="chip green">Private</span></div><div class="s">${esc(o.name)} on your Cloudflare account.${o.outdated ? ' Updating it to this version…' : ''}${o.lastError ? ' Last update failed: run “agentseye relay deploy” in Terminal.' : ''}</div></div></div>`;
+  return `<div class="item own-relay"><div class="grow"><div class="connection-title"><b>Get your own relay</b><span class="chip">Free · recommended</span></div><div class="s">${s.sharedRelay ? 'You’re on a shared relay, which has a daily limit per Mac. ' : ''}Put a private relay on your own free Cloudflare account in about a minute. A Terminal window walks you through it.</div></div>
+    ${me.local ? '<button class="small primary" id="own-relay">Set up</button>' : '<span class="small muted">On the Mac</span>'}</div>`;
 }
 function bindRelayRow(root, r, after) {
   const toggle = root.querySelector('#relay-on');
@@ -668,16 +678,16 @@ function macCard(s) {
 }
 
 // Where an agent runs on the Mac: Terminal, VS Code, Cursor, T3 Code, the Claude or Codex app…
-const appLabel = a => (a.source === 't3' ? 'T3 Code' : a.source === 'ide' ? { cursor:'Cursor', vscode:'VS Code', gemini:'Terminal' }[a.app] || ''
-  : a.app || (['claude-vscode', 'codex-vscode'].includes(a.entrypoint) ? 'VS Code' : 'Terminal'));
+const appLabel = a => (a.source === 't3' ? 'T3 Code' : a.source === 'ide' ? { cursor:'Cursor', vscode:'VS Code', gemini:'Gemini CLI', opencode:'OpenCode' }[a.app] || ''
+  : a.harness === 'cli' ? [a.kindName, a.app].filter(Boolean).join(' in ') : a.app || (['claude-vscode', 'codex-vscode'].includes(a.entrypoint) ? 'VS Code' : 'Terminal'));
 
 function agentRow(a) {
   const st = agentState(a);
   // The app goes first so it survives when a long folder or branch name is cut off.
   const sub = [appLabel(a), ...(a.source === 't3' ? [a.project, a.preview && st !== 'busy' ? a.preview : ''] : [where(a)])].filter(Boolean).join(' · ');
   return `<a class="agent ${st}" href="${agentHref(a)}">
-    <div class="avatar">${avatar(a.harness, { waiting:'waiting', busy:'busy', open:'open', done:'off', failed:'off' }[st])}</div>
-    <div class="grow"><div class="t">${esc(a.name || a.title)}</div><div class="s">${esc(sub || harnessName[a.harness])}</div></div>
+    <div class="avatar">${avatar(agentKey(a), { waiting:'waiting', busy:'busy', open:'open', done:'off', failed:'off' }[st])}</div>
+    <div class="grow"><div class="t">${esc(a.name || a.title)}</div><div class="s">${esc(sub || agentName(a))}</div></div>
     <div class="side">${{ waiting:'<span class="chip amber">Needs you</span>', busy:'<span class="chip blue"><span class="spin"></span>Working</span>', failed:'<span class="chip red">Failed</span>' }[st] || ''}<span class="when">${ago(a.updatedAt)}</span></div></a>`;
 }
 
@@ -694,9 +704,9 @@ async function homeView() {
   const paintList = () => {
     const d = data;
     const term = $('#q').value.trim().toLowerCase();
-    const apps = [...new Set(d.agents.map(a => a.harness))];
+    const apps = [...new Set(d.agents.map(agentKey))];
     if (!apps.includes(filter)) filter = 'all';
-    const match = a => (filter === 'all' || a.harness === filter) && (!term || [a.title, a.name, a.project, a.preview, where(a)].some(v => String(v || '').toLowerCase().includes(term)));
+    const match = a => (filter === 'all' || agentKey(a) === filter) && (!term || [a.title, a.name, a.project, a.preview, where(a)].some(v => String(v || '').toLowerCase().includes(term)));
     const shown = d.agents.filter(match);
     const groups = { waiting:[], busy:[], recent:[] };
     for (const a of shown) groups[a.status === 'waiting' ? 'waiting' : a.status === 'busy' ? 'busy' : 'recent'].push(a);
@@ -708,7 +718,7 @@ async function homeView() {
       ${section('Needs you', groups.waiting)}
       ${section('Working', groups.busy)}
       ${recent.length ? `<div class="section"><h2>Recent</h2></div><div class="agents">${recent.slice(0, limit).map(agentRow).join('')}</div>${recent.length > 8 && !term ? `<button class="more" id="more">${showAll ? 'Show less' : `Show ${recent.length - 8} more`}</button>` : ''}` : ''}
-      ${!d.agents.length ? `<div class="empty-state"><div class="big">👀</div><b>No agents yet</b><div class="small muted">${d.t3.connected ? 'Start a chat with the + button.' : 'Start Claude Code or Codex on your Mac and it shows up here.'}</div></div>` : !shown.length ? '<div class="empty">No chats match.</div>' : ''}
+      ${!d.agents.length ? `<div class="empty-state"><div class="big">👀</div><b>No agents yet</b><div class="small muted">${d.t3.connected ? 'Start a chat with the + button.' : 'Start Claude Code, Codex, Gemini, OpenCode or any coding agent on your Mac and it shows up here. Or tap + to start one.'}</div></div>` : !shown.length ? '<div class="empty">No chats match.</div>' : ''}
       ${!d.t3.connected && d.t3.installed ? `<div class="small muted center">T3 Code isn't running, so its chats aren't shown.</div>` : ''}
       ${limitsCard(d.limits)}`;
     $('#home-search').hidden = d.agents.length < 6;
@@ -750,26 +760,37 @@ async function homeView() {
   every(4000, () => render().catch(() => {}));
 }
 
-// New chats start in T3 Code when it is running, so they show up in the desktop app; otherwise in Terminal.
+// New chats start in T3 Code when it is running (Claude and Codex), so they show up in the desktop app; otherwise,
+// and for every other agent CLI installed on the Mac (Gemini, OpenCode, Aider…), in a Terminal window.
 async function newChatSheet(d) {
   d = d || await api('/api/home').catch(() => null);
   if (!d) return;
-  const viaT3 = d.t3.connected && d.t3Projects.length;
-  const projects = viaT3 ? d.t3Projects : [];
+  const choices = (d.startable?.length ? d.startable : [{ harness:'claude', name:'Claude Code' }, { harness:'codex', name:'Codex' }])
+    .map(c => ({ ...c, key:c.harness === 'cli' ? `cli:${c.kind}` : c.harness }));
+  if (!choices.some(c => c.key === draft.harness)) draft.harness = choices[0].key;
+  const t3Ready = d.t3.connected && d.t3Projects.length;
+  const viaT3 = () => t3Ready && ['claude', 'codex'].includes(draft.harness);
   const last = localStorage.getItem('t3-project');
   sheet(`<h3>New chat</h3>
-    <div class="seg" id="nc-h">${Object.entries(harnessName).map(([k, v]) => `<button data-h="${k}" class="${k === draft.harness ? 'on' : ''}">${v}</button>`).join('')}</div>
-    ${viaT3 ? `<select id="nc-p">${projects.map(p => `<option value="${esc(p.id)}" ${p.id === last ? 'selected' : ''}>${esc(p.title)} — ${esc(home(p.cwd))}</option>`).join('')}</select>`
-      : `<input id="nc-cwd" placeholder="Folder, e.g. ~/code/app" value="${esc(draft.cwd)}" autocapitalize="off" autocorrect="off">`}
+    <div class="seg wrap" id="nc-h">${choices.map(c => `<button data-h="${esc(c.key)}" class="${c.key === draft.harness ? 'on' : ''}">${esc(c.name)}</button>`).join('')}</div>
+    ${t3Ready ? `<select id="nc-p">${d.t3Projects.map(p => `<option value="${esc(p.id)}" ${p.id === last ? 'selected' : ''}>${esc(p.title)} — ${esc(home(p.cwd))}</option>`).join('')}</select>` : ''}
+    <input id="nc-cwd" placeholder="Folder, e.g. ~/code/app" value="${esc(draft.cwd)}" autocapitalize="off" autocorrect="off">
     <textarea id="nc-text" rows="4" placeholder="What should the agent do?"></textarea>
     <button class="primary" id="nc-go">Start</button>
-    <div class="small muted center">${viaT3 ? 'Starts in T3 Code, so it also appears on your Mac.' : 'Opens in a Terminal window on your Mac.'}</div>`, card => {
-    card.querySelectorAll('[data-h]').forEach(b => b.onclick = () => { draft.harness = b.dataset.h; localStorage.setItem('harness', draft.harness); card.querySelectorAll('[data-h]').forEach(x => x.classList.toggle('on', x === b)); });
+    <div class="small muted center" id="nc-where"></div>`, card => {
+    const sync = () => {
+      card.querySelector('#nc-p')?.toggleAttribute('hidden', !viaT3());
+      card.querySelector('#nc-cwd').hidden = viaT3();
+      card.querySelector('#nc-where').textContent = viaT3() ? 'Starts in T3 Code, so it also appears on your Mac.' : 'Opens in a Terminal window on your Mac.';
+    };
+    sync();
+    card.querySelectorAll('[data-h]').forEach(b => b.onclick = () => { draft.harness = b.dataset.h; localStorage.setItem('harness', draft.harness); card.querySelectorAll('[data-h]').forEach(x => x.classList.toggle('on', x === b)); sync(); });
     card.querySelector('#nc-text').focus();
     card.querySelector('#nc-go').onclick = () => attempt(async () => {
       const text = card.querySelector('#nc-text').value.trim();
-      if (!text) throw new Error('Write what the agent should do.');
-      if (viaT3) {
+      const pick = choices.find(c => c.key === draft.harness);
+      if (!text && pick.harness !== 'cli') throw new Error('Write what the agent should do.');
+      if (viaT3()) {
         const projectId = card.querySelector('#nc-p').value;
         localStorage.setItem('t3-project', projectId);
         const r = await api('/api/t3/create', { projectId, text, harness:draft.harness });
@@ -778,8 +799,8 @@ async function newChatSheet(d) {
       } else {
         draft.cwd = card.querySelector('#nc-cwd').value.trim();
         localStorage.setItem('cwd', draft.cwd);
-        const started = await api('/api/agents/start', { harness:draft.harness, cwd:draft.cwd, prompt:text });
-        openWhenReady(started, '');
+        const started = await api('/api/agents/start', { harness:pick.harness, kind:pick.kind || '', cwd:draft.cwd, prompt:text });
+        openWhenReady({ ...started, kindName:pick.name }, '');
       }
     });
   });
@@ -1050,7 +1071,7 @@ async function t3View(id, app = '') {
     $('#s-title').textContent = s.title;
     $('#s-sub').textContent = [s.project, s.model].filter(Boolean).join(' · ');
     $('#changes').hidden = !s.cwd;
-    $('#s-avatar').innerHTML = avatar(s.harness, { waiting:'waiting', busy:'busy' }[st] || 'open');
+    $('#s-avatar').innerHTML = avatar(agentKey(s), { waiting:'waiting', busy:'busy' }[st] || 'open');
     $('#s-chip').innerHTML = { waiting:'<span class="chip amber">Needs you</span>', busy:'<span class="chip blue"><span class="spin"></span>Working</span>', failed:'<span class="chip red">Failed</span>' }[st] || '<span class="chip green">Ready</span>';
     const said = new Set(info.messages.filter(m => m.role === 'user').map(m => m.text.trim()));
     outbox = outbox.filter(o => o.state !== 'sent' || !said.has(o.text));
@@ -1096,7 +1117,7 @@ async function t3View(id, app = '') {
       // While it works, anything typed is queued and sent when it finishes.
       const busy = st === 'busy';
       foot.innerHTML = `${busy ? '<div class="statusbar"><span class="spin"></span><span class="grow" id="activity"></span><button class="small bad" id="stop">Stop</button></div>' : ''}
-        ${composer({ placeholder:busy ? 'Queue a message…' : `Message ${harnessName[info.session.harness]}…`, quick:!busy })}`;
+        ${composer({ placeholder:busy ? 'Queue a message…' : `Message ${agentName(info.session)}…`, quick:!busy })}`;
       $('#stop')?.addEventListener('click', async () => { if (await confirmSheet('Stop the agent?', 'It stops what it is doing. You can send it a new message afterwards.', 'Stop', true)) attempt(async () => { await api('/api/t3/stop', { id }); draw(false).catch(() => {}); }, 'Stopping…'); });
       bindComposer(foot, { keep, onSend:text => (busy ? attempt(async () => { await api('/api/queue', { kind:'t3', id, text }); lastPane = ''; await draw(false); }, 'Queued') : send(text)) });
       return;
@@ -1205,12 +1226,16 @@ function bindApprovals(root, after) {
 }
 
 // ---------- Session ----------
+// Terminal agents (Gemini, OpenCode, Aider…) open on their live terminal; Claude and Codex on their chat.
+const KEY_ORDER = [['esc', 'Stop'], ['up', '↑'], ['down', '↓'], ['enter', 'Enter'], ['tab', 'Tab'], ['1', '1'], ['2', '2'], ['3', '3'], ['y', 'y'], ['n', 'n'], ['mode', 'Mode'], ['ctrlc', '^C']];
 async function sessionView(harness, id) {
-  let tab = 'chat';
+  const cliAgent = harness === 'cli';
+  const face = cliAgent ? id.split('.')[0] : harness;
+  let tab = cliAgent ? 'terminal' : 'chat';
   let info = null;
   const view = $('#view');
-  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar">${avatar(harness, 'open')}</div><button class="grow title-btn" id="s-name" aria-label="Rename"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></button>${relay.on ? '<button class="icon-btn" id="share" aria-label="Share a read-only link">🔗</button>' : ''}<button class="icon-btn" id="changes" aria-label="Changes">±</button><button class="chip-btn" id="s-chip" aria-label="Session actions"></button></div>
-    <div class="seg" id="s-tabs"><button data-t="chat" class="on">Chat</button>${harness === 'claude' ? '<button data-t="helpers">Helpers</button>' : ''}<button data-t="terminal">Terminal</button><button data-t="files">Files</button></div></header>
+  view.innerHTML = `<div class="session"><header><div class="who"><button class="back" id="back" aria-label="Back">‹</button><div class="avatar" id="s-avatar">${avatar(face, 'open')}</div><button class="grow title-btn" id="s-name" aria-label="Rename"><h1 id="s-title">Loading…</h1><div class="small muted" id="s-sub"></div></button>${relay.on ? '<button class="icon-btn" id="share" aria-label="Share a read-only link">🔗</button>' : ''}<button class="icon-btn" id="changes" aria-label="Changes">±</button><button class="chip-btn" id="s-chip" aria-label="Session actions"></button></div>
+    <div class="seg" id="s-tabs">${cliAgent ? '<button data-t="terminal" class="on">Terminal</button><button data-t="chat">Chat</button>' : `<button data-t="chat" class="on">Chat</button>${harness === 'claude' ? '<button data-t="helpers">Helpers</button>' : ''}<button data-t="terminal">Terminal</button>`}<button data-t="files">Files</button></div></header>
     <div class="pane" id="pane"></div><div class="foot" id="foot"></div></div>`;
   $('#back').onclick = () => { location.hash = '#/'; };
   $('#changes').onclick = () => { location.hash = `#/g/local/${harness}/${encodeURIComponent(id)}`; };
@@ -1254,19 +1279,19 @@ async function sessionView(harness, id) {
     const helperTab = $('#s-tabs [data-t=helpers]');
     if (helperTab) helperTab.textContent = s.subagents?.length ? `Helpers ${s.subagents.filter(a => a.status === 'running').length || s.subagents.length}` : 'Helpers';
     $('#s-chip').innerHTML = `${statusChip(s)}<span class="muted" style="margin-left:4px">⋯</span>`;
-    $('#s-avatar').innerHTML = avatar(harness, s.live ? s.status : 'off');
+    $('#s-avatar').innerHTML = avatar(face, s.live ? s.status : 'off');
     let html;
     if (tab === 'chat') {
       // A sent message stays as a pending bubble until it shows up in the transcript.
       const said = new Set(info.messages.filter(m => m.role === 'user').map(m => m.text.trim()));
       outbox = outbox.filter(o => o.state !== 'sent' || !said.has(o.text));
-      html = (info.messages.map(m => m.role === 'tool' ? `<div class="tool">▸ ${esc(m.text)}</div>` : `<div class="msg ${m.role}">${m.role === 'assistant' ? markdown(m.text) : userText(m.text)}${fileButtons(m.files, harness, id)}<div class="when">${ago(m.time)}</div></div>`).join('') || (outbox.length ? '' : '<div class="empty">No messages yet. Say something below.</div>'))
+      html = (info.messages.map(m => m.role === 'tool' ? `<div class="tool">▸ ${esc(m.text)}</div>` : `<div class="msg ${m.role}">${m.role === 'assistant' ? markdown(m.text) : userText(m.text)}${fileButtons(m.files, harness, id)}<div class="when">${ago(m.time)}</div></div>`).join('') || (outbox.length ? '' : `<div class="empty">${cliAgent && !s.hasTranscript ? `${esc(agentName(s))} doesn't keep a chat log AgentsEye can read. Follow it in the Terminal tab; messages you send here still go to it.` : 'No messages yet. Say something below.'}</div>`))
         + queuedHtml(info.queued)
         + outbox.map((o, i) => `<div class="msg user pending ${o.state}">${userText(o.text)}<div class="when">${{ sending:'<span class="spin"></span> Sending to your Mac…', sent:'✓ Delivered · waiting for the agent', failed:`Not sent: ${esc(o.error)} · <button class="linkish" data-resend="${i}">Retry</button>` }[o.state]}</div></div>`).join('');
     } else if (tab === 'helpers') {
       html = info.helpers.length ? `<div class="list">${info.helpers.map(helperRow(harness, id)).join('')}</div>` : '<div class="empty">This session has not started any subagents.</div>';
     } else if (tab === 'terminal') {
-      html = info.terminal ? `<div class="small muted">Live · ${esc(info.terminal.tty.replace('/dev/', ''))} on your Mac · updates every 2s</div><div class="screen" id="screen">${esc(info.terminal.screen)}</div>` : `<div class="empty">${esc(info.terminalNote)}</div>`;
+      html = info.terminal ? `<div class="small muted">Live · ${esc(info.terminal.host || 'Terminal')} · ${esc(info.terminal.tty.replace('/dev/', ''))} on your Mac · updates every 2s</div><div class="screen" id="screen">${esc(info.terminal.screen)}</div>` : `<div class="empty">${esc(info.terminalNote)}</div>`;
     } else {
       html = info.files.length ? info.files.map(f => `<button class="file" data-path="${esc(f.path)}" style="text-align:left"><div class="ico">${f.kind === 'image' ? `<img loading="lazy" src="${fileUrl(harness, id, f.path)}" alt="">` : { video:'🎬', audio:'🎵', pdf:'📄', doc:'📝' }[f.kind]}</div><div style="flex:1;min-width:0"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600">${esc(base(f.path))}</div><div class="small muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(f.path)} · ${bytes(f.size)} · ${ago(f.mtime)}</div></div></button>`).join('') : '<div class="empty">No images, videos or documents in this project yet.</div>';
     }
@@ -1287,14 +1312,18 @@ async function sessionView(harness, id) {
     const s = info.session;
     const t = info.terminal;
     if (tab === 'helpers') { foot.innerHTML = ''; foot.dataset.key = 'helpers'; return; }
-    const key = tab === 'chat' ? `chat|${info.approvals.map(a => a.id)}|${info.delivery}|${s.status}` : tab === 'terminal' ? `term|${Boolean(t)}|${t?.choices?.map(c => c.label).join()}` : 'files';
+    const key = tab === 'chat' ? `chat|${info.approvals.map(a => a.id)}|${info.delivery}|${s.status}` : tab === 'terminal' ? `term|${Boolean(t)}|${t?.choices?.map(c => c.label).join()}|${t?.keys?.join()}` : 'files';
     if (foot.dataset.key === key) return;
     foot.dataset.key = key;
     if (tab === 'files') { foot.innerHTML = ''; return; }
     if (tab === 'terminal') {
+      const keep = $('#reply')?.value || '';
+      const offered = new Set(t?.keys?.length ? t.keys : ['esc', '1', '2', '3', 'enter', 'mode']);
       foot.innerHTML = t ? `${t.choices?.length ? `<div class="list">${t.choices.map(c => `<button data-k="${c.key}" style="text-align:left">${esc(c.key)}. ${esc(c.label)}</button>`).join('')}</div>` : ''}
-        <div class="keys"><button class="stop" data-k="esc">Stop</button><button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button><button data-k="enter">Enter</button><button data-k="mode" aria-label="Change mode">Mode</button></div>` : '';
+        <div class="keys">${KEY_ORDER.filter(([k]) => offered.has(k)).map(([k, label]) => `<button ${k === 'esc' ? 'class="stop" ' : ''}data-k="${k}" aria-label="${k === 'mode' ? 'Change mode' : esc(label)}">${label}</button>`).join('')}</div>
+        ${composer({ placeholder:`Type to ${agentName(s)}…`, quick:false })}` : '';
       foot.querySelectorAll('[data-k]').forEach(b => b.onclick = () => attempt(async () => { await api('/api/session/keys', { harness, id, key:b.dataset.k }); setTimeout(() => draw(false), 400); }));
+      if (t) bindComposer(foot, { keep, onSend:text => send(text) });
       return;
     }
     const keep = $('#reply')?.value || '';
@@ -1302,7 +1331,7 @@ async function sessionView(harness, id) {
     const blocked = info.delivery === 'none' && !info.canMove;
     const note = !busy && info.delivery === 'none' ? info.deliveryNote : '';
     foot.innerHTML = `${info.approvals.map(approvalCard).join('')}${busy ? '<div class="statusbar"><span class="spin"></span><span class="grow">Working…</span></div>' : note ? `<div class="busybar"><span class="small muted">${esc(note)}</span></div>` : ''}
-      ${composer({ placeholder:blocked ? 'Read only' : busy ? 'Queue a message…' : `Message ${harnessName[harness] || 'agent'}…`, disabled:blocked, quick:!busy })}`;
+      ${composer({ placeholder:blocked ? 'Read only' : busy ? 'Queue a message…' : `Message ${agentName(s)}…`, disabled:blocked, quick:!busy })}`;
     bindApprovals(foot, () => { foot.dataset.key = ''; draw(false); });
     if (blocked) return;
     bindComposer(foot, {
@@ -1321,7 +1350,7 @@ async function sessionView(harness, id) {
     paint(false);
     draw(false).catch(() => {});
   };
-  pane.innerHTML = skeleton(5, 'bubble');
+  pane.innerHTML = skeleton(5, tab === 'terminal' ? 'terminal' : 'bubble');
   await draw(true).catch(e => sessionError(pane, e, () => draw(true)));
   every(tab === 'terminal' ? 2000 : 3000, () => draw(false).catch(() => {}));
 }
@@ -1399,13 +1428,15 @@ async function settingsView() {
     const phoneAccess = `      <div class="section"><h2>Phone access</h2></div>
       <div class="group phone-access">
         ${relayRow(s.relay, view.querySelector('#relay-config')?.open)}
-        <details class="connection-options" id="phone-options" ${(view.querySelector('#phone-options')?.open ?? (s.tailscale.serving || t.enabled || Boolean(t.error && t.status !== 'missing'))) ? 'open' : ''}><summary><span>Other connection options</span><span class="options-hint">Tailscale, Cloudflare</span></summary><div class="connection-choices">
+        ${ownRelayRow(s)}
+        <details class="connection-options" id="phone-options" ${(view.querySelector('#phone-options')?.open ?? (s.tailscale.serving || t.enabled || Boolean(t.error && t.status !== 'missing'))) ? 'open' : ''}><summary><span>Other connection options</span><span class="options-hint">Tailscale, Cloudflare Tunnel, your server</span></summary><div class="connection-choices">
         ${!me.local ? '<p class="small muted connection-note">Set up these options on your Mac.</p>' : ''}
         <div class="item"><div class="grow"><b>Tailscale</b><div class="s">${{ missing:'Private access between your devices.', 'signed-out':'Sign in to Tailscale on both devices.', stopped:'Open Tailscale to connect.', running:s.tailscale.serving ? 'On · Private device connection' : 'Ready · Turn on phone access' }[s.tailscale.state] || 'Unavailable'}</div></div>
           ${me.local ? (s.tailscale.state === 'running' ? `<label class="switch"><input type="checkbox" id="ts" ${s.tailscale.serving ? 'checked' : ''}><i></i></label>` : `<button class="small" id="ts-open">${s.tailscale.state === 'missing' ? 'Get it' : 'Open'}</button>`) : ''}</div>
-        <div class="item"><div class="grow"><b>Cloudflare Tunnel</b><div class="s">${{ on:'On · Public HTTPS link', missing:'Requires cloudflared on your Mac.', off:'Off · Create a public HTTPS link', starting:'Starting…', restarting:'Reconnecting…' }[t.status] || esc(t.status)}</div></div>
+        <div class="item"><div class="grow"><b>Cloudflare Tunnel</b><div class="s">${{ on:'On · Public HTTPS link', missing:'No account needed. Installs cloudflared privately, no admin rights.', off:'Off · Create a public HTTPS link, no account needed', starting:'Starting…', restarting:'Reconnecting…' }[t.status] || esc(t.status)}</div></div>
           ${me.local ? (t.status === 'missing' ? `<button class="small primary" id="install-cf" ${s.installingCloudflared ? 'disabled' : ''}>${s.installingCloudflared ? 'Installing…' : 'Install'}</button>` : `<label class="switch"><input type="checkbox" id="tunnel" ${t.enabled ? 'checked' : ''}><i></i></label>`) : ''}</div>
-        ${t.error && t.status !== 'missing' ? `<div class="connection-error small">${esc(t.error)}</div>` : ''}
+        ${t.error ? `<div class="connection-error small">${esc(t.error)}</div>` : ''}
+        <div class="item"><div class="grow"><b>Your own server</b><div class="s">Run the relay anywhere with Docker or Node (see relay/README.md in the AgentsEye repository), then enter its address under Relay settings above.</div></div></div>
         </div></details>
         ${s.phoneUrl && me.local ? `<div class="qr"><img src="/api/pair/qr?ts=${s.pairingAt}" alt="QR code to open AgentsEye on your phone"><b>Scan to connect your phone</b><div class="small muted" style="text-align:center">Sign in with your AgentsEye password. This QR code expires in 10 minutes.</div><div class="url mono muted">${esc(s.phoneUrl)}</div><button class="small" id="copy">Copy link</button></div>
           <div class="item"><div class="grow small muted">On iPhone: in Safari tap Share → <b>Add to Home Screen</b>, open AgentsEye from there, then turn on notifications below.</div></div>` : ''}
@@ -1449,6 +1480,7 @@ async function settingsView() {
     view.innerHTML = html;
     $('#install-s')?.addEventListener('click', installSheet);
     bindRelayRow(view, s.relay, () => { shown = ''; render(); });
+    $('#own-relay')?.addEventListener('click', () => attempt(() => api('/api/relay/own', {}), 'Follow the steps in the Terminal window on your Mac'));
     view.querySelectorAll('[data-copy-phone]').forEach(b => b.onclick = () => attempt(() => navigator.clipboard.writeText(b.dataset.copyPhone), 'Link copied'));
     $('#ts')?.addEventListener('change', e => attempt(async () => { await api('/api/tailscale', { on:e.target.checked }); shown = ''; render(); }, e.target.checked ? 'Serving on your tailnet' : 'Stopped'));
     $('#ts-open')?.addEventListener('click', () => attempt(() => api('/api/tailscale/open', {})));

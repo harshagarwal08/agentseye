@@ -21,3 +21,7 @@ new_sqlite_classes = ["MacRoom"]
 # The GitHub repository install.sh downloads AgentsEye from (owner/name).
 [vars]
 REPO = "harshagarwal08/agentseye"
+# This is the public, shared relay: each Mac gets this many phone requests a day (an open phone app makes ~25 a
+# minute), so nobody can use up the free Cloudflare quota for everyone. Personal relays made with
+# `agentseye relay deploy` have no limit. Set to "0" to turn it off.
+MAC_DAILY_LIMIT = "6000"

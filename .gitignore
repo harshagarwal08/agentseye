@@ -3,3 +3,4 @@ node_modules
 .wrangler
 relay/node_modules
 relay-data.json
+relay-build

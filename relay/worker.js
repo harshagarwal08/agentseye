@@ -13,7 +13,7 @@ export default {
       if (request.headers.get('upgrade') !== 'websocket') return new Response('Expected a WebSocket', { status:426 });
       return env.MACS.get(env.MACS.idFromName(mac)).fetch(request);
     }
-    const r = route(request, { repo:env.REPO || '' });
+    const r = route(request, { repo:env.REPO || '', shared:Number(env.MAC_DAILY_LIMIT || 0) > 0 });
     if (r.response) return r.response;
     const forwarded = new Request(request);
     forwarded.headers.set('x-agentseye-mac', r.macId);

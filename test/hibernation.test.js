@@ -87,3 +87,20 @@ test('a disconnected socket fails pending requests instead of leaving the phone 
   assert.equal(room.room.pending.size, 0);
   assert.equal(room.room.socket, null);
 });
+
+test('a shared relay gives each Mac a daily share; exempt Macs and personal relays are unlimited', async () => {
+  const f = fixture();
+  const ws = f.socket();
+  const room = new HibernatingMacRoom(f.state, { MAC_DAILY_LIMIT:'3' }, 'test');
+  await f.hello(room, ws);
+  const results = [];
+  for (let i = 0; i < 4; i++) results.push(await room.allow());
+  assert.deepEqual(results, [true, true, true, false]);
+  assert.equal(f.stored.get('usage').n, 4, 'saved when the limit is crossed');
+  const exempt = new HibernatingMacRoom(f.state, { MAC_DAILY_LIMIT:'1', UNLIMITED_MACS:`other, ${MAC}` }, 'test');
+  exempt.room.macId = MAC;
+  assert.equal(await exempt.allow(), true);
+  assert.equal(await exempt.allow(), true);
+  const personal = new HibernatingMacRoom(f.state, {}, 'test');
+  assert.equal(await personal.allow(), true);
+});

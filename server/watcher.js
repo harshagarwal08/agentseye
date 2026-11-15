@@ -7,6 +7,8 @@ import { usage, runsOutAt } from './usage.js';
 import * as t3 from './t3.js';
 import * as ides from './ides.js';
 import * as power from './power.js';
+import * as cli from './cli-agents.js';
+import * as terminal from './terminal.js';
 
 const clip = (text, n = 140) => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
@@ -58,6 +60,24 @@ export function start() {
       ideWas.set(key, c.status);
     }
   }, 15000).unref();
+
+  // Other terminal agents (Gemini, OpenCode, Aider…): their screen says whether they work or ask; ping on changes.
+  const cliWas = new Map();
+  setInterval(async () => {
+    const list = await cli.list().catch(() => []);
+    for (const s of list) {
+      let st = s.status;
+      try { if (await terminal.hostOf(s.tty)) { const seen = terminal.screenStatus(await terminal.readScreen(s.tty, 24)); if (seen !== 'open' || st !== 'busy') st = seen; } } catch {}
+      const before = cliWas.get(s.id);
+      const url = `/#/s/cli/${encodeURIComponent(s.id)}`;
+      const title = clip(nameOf('cli', s.id) || s.title, 60);
+      if (st === 'waiting' && before && before !== 'waiting') push.notify({ title, body:'Needs you', url, tag:`cli-${s.id}` });
+      else if (before === 'busy' && st === 'open') push.notify({ title, body:'Done', url, tag:`cli-${s.id}` });
+      cliWas.set(s.id, st);
+    }
+    const ids = new Set(list.map(s => s.id));
+    for (const k of cliWas.keys()) if (!ids.has(k)) cliWas.delete(k);
+  }, 10000).unref();
 
   // An agent "working" with no new output for 20 minutes is often stuck in a loop or waiting on something hidden.
   const STUCK_AFTER = 20 * 60000;

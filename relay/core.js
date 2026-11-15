@@ -12,6 +12,7 @@ const MAX_BODY = 900 * 1024;          // one frame; Cloudflare allows 1 MiB per 
 const HEAD_TIMEOUT = 60000;
 const IDLE_TIMEOUT = 120000;
 const enc = new TextEncoder();
+export const OVER_LIMIT = 'This shared relay has carried today\'s share for your Mac. Get your own free relay in a minute: on your Mac run "agentseye relay deploy" (or Settings → Phone access → Your own relay). Resets at midnight UTC.';
 
 const b64 = bytes => { let s = ''; const v = new Uint8Array(bytes); for (let i = 0; i < v.length; i += 0x8000) s += String.fromCharCode(...v.subarray(i, i + 0x8000)); return btoa(s); };
 const unb64 = t => Uint8Array.from(atob(t), c => c.charCodeAt(0));
@@ -72,9 +73,9 @@ button{width:100%;margin-top:16px;font:600 16px -apple-system,system-ui,sans-ser
 
 // The product page: what AgentsEye is and the one line that installs it, pointed at this relay.
 const esc = v => String(v).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' })[c]);
-const landing = (origin, repo) => `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+const landing = (origin, repo, shared = false) => `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AgentsEye — your coding agents, on your phone</title>
-<meta name="description" content="See and control Claude Code and Codex on your Mac from your phone. Nothing to install on company Macs, end-to-end encrypted, free.">
+<meta name="description" content="Watch and drive every coding agent on your Mac from your phone: Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Copilot, Aider and more. End-to-end encrypted, free, open source.">
 <link rel="icon" href="data:image/svg+xml,${encodeURIComponent(ICON)}">
 <style>
 body{margin:0;font:17px/1.5 -apple-system,system-ui,sans-serif;background:#f6f1e7;color:#2b2620}
@@ -95,11 +96,12 @@ a{color:#c8553d}
 <main>
 <img class="logo" alt="" src="data:image/svg+xml,${encodeURIComponent(ICON)}">
 <h1>Your coding agents,<br>in your pocket.</h1>
-<p class="lede">AgentsEye shows every Claude Code and Codex session on your Mac, lets you answer them, approve their requests and start new ones — from your phone, anywhere.</p>
+<p class="lede">AgentsEye shows every coding agent on your Mac — Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Copilot, Aider and more — and lets you answer them, approve their requests and start new ones. From your phone, anywhere.</p>
 <div class="cmd"><code id="c">curl -fsSL ${esc(origin)} | sh</code><button onclick="navigator.clipboard.writeText(document.getElementById('c').textContent);this.textContent='Copied'">Copy</button></div>
 <p class="small">Paste into Terminal on your Mac. No admin rights or Homebrew needed. macOS only.</p>
+${shared ? '<p class="small"><b>This is a shared relay for trying AgentsEye</b>, with a daily limit per Mac. For everyday use, give yourself a private one on your own free Cloudflare account: after installing, run <code>agentseye relay deploy</code>. Tailscale and Cloudflare Tunnel work too.</p>' : ''}
 <div class="grid">
-<div class="card"><b>👀 Everything at a glance</b>Live sessions, subagents, usage limits, and what your Mac is up to.</div>
+<div class="card"><b>👀 Every agent at a glance</b>Claude Code, Codex, Gemini, OpenCode, Cursor, Copilot, Aider, Amp, Qwen… in Terminal, iTerm, tmux, VS Code, Cursor or T3 Code.</div>
 <div class="card"><b>💬 Reply and approve</b>Chat with agents, answer their questions, allow or deny their commands.</div>
 <div class="card"><b>🔒 Encrypted end to end</b>Phone and Mac share a key from your password. This relay only passes along ciphertext.</div>
 <div class="card"><b>🏢 Works on company Macs</b>Only an outbound HTTPS connection. No tunnels, no open ports, nothing installed system-wide.</div>
@@ -173,11 +175,15 @@ export class Room {
   }
 
   // A phone request for this Mac: the app's files come from the relay, encrypted calls go down to the Mac.
-  async serve(request, { ip = '', macId, read, version = '' }) {
+  // allow(): false once this Mac has used up its share of a shared relay today (see mac-room.js).
+  async serve(request, { ip = '', macId, read, version = '', allow }) {
     const url = new URL(request.url);
     const accept = request.headers.get('accept') || '';
     if (!this.socket && (TO_MAC.has(url.pathname) || (url.pathname === '/' && accept.includes('text/html')))) {
       return accept.includes('text/html') ? new Response(offlinePage(), { status:503, headers:{ 'content-type':'text/html; charset=utf-8', 'cache-control':'no-store' } }) : new Response('Mac offline', { status:503, headers:{ 'cache-control':'no-store' } });
+    }
+    if (url.pathname === '/api/e2e' && allow && !(await allow())) {
+      return new Response(JSON.stringify({ error:OVER_LIMIT }), { status:429, headers:{ ...SECURITY, 'content-type':'application/json', 'cache-control':'no-store' } });
     }
     if (TO_MAC.has(url.pathname)) return this.forward(request, { ip, macId });
     return shellFile(url.pathname, { macId, read, version });
@@ -242,7 +248,7 @@ export class Room {
 
 // Routes that don't need a Mac: the landing page, health, and /m/<id> which remembers the Mac in a cookie and
 // sends the browser to "/" so the app's absolute paths work unchanged. Returns null when the request is for a Mac.
-export function route(request, { repo = '' } = {}) {
+export function route(request, { repo = '', shared = false } = {}) {
   const url = new URL(request.url);
   if (url.pathname === '/health') return { response:new Response('ok') };
   // `curl -fsSL <relay> | sh` works too: command-line tools asking for the home page get the installer.
@@ -268,6 +274,6 @@ export function route(request, { repo = '' } = {}) {
     return { response:new Response(null, { status:302, headers:{ location:`/m/${queryMac}${rest.size ? `?${rest}` : ''}`, 'cache-control':'no-store' } }) };
   }
   const macId = cookieMac;
-  if (!macId) return { response:new Response(landing(url.origin, repo), { status:200, headers:{ 'content-type':'text/html; charset=utf-8' } }) };
+  if (!macId) return { response:new Response(landing(url.origin, repo, shared), { status:200, headers:{ 'content-type':'text/html; charset=utf-8' } }) };
   return { macId };
 }
